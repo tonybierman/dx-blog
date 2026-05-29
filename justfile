@@ -19,6 +19,14 @@ fresh: clean-assets
 serve:
     dx serve
 
+# seed::run_if_empty no-ops while any post exists, so a reseed must start from an
+# empty DB. Set DX_SEED_ADMIN_PASSWORD / DX_SEED_DEMO_PASSWORD to choose
+# passwords, else they're generated and printed once.
+# Wipe the dev DB (data/blog.db) and serve with seeding on. Destructive, dev only.
+reseed:
+    rm -f data/blog.db data/blog.db-wal data/blog.db-shm
+    DX_SEED=1 dx serve
+
 # Serve a release client — far smaller/faster wasm than debug, so no
 # slow-to-hydrate window on fresh loads. Slower first compile.
 serve-release:

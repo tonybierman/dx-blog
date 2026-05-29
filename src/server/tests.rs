@@ -96,6 +96,72 @@ fn render_markdown_drops_onclick_attributes() {
     );
 }
 
+// ---------------------------------------------------------------- mdx / embeds
+
+use crate::mdx::{parse_body, Segment};
+
+#[test]
+fn parse_body_without_embeds_is_single_html_run() {
+    let md = "# Title\n\nSome **bold** text.";
+    let segs = parse_body(md);
+    assert_eq!(segs.len(), 1, "no embeds → one run: {segs:?}");
+    match &segs[0] {
+        Segment::Html(html) => assert_eq!(
+            html,
+            &render_markdown(md),
+            "prose run must match render_markdown byte-for-byte"
+        ),
+        other => panic!("expected Html, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_body_splits_prose_around_embed() {
+    let segs = parse_body("before\n\n[[component:counter start=2]]\n\nafter");
+    assert_eq!(segs.len(), 3, "prose / embed / prose: {segs:?}");
+    assert!(matches!(segs[0], Segment::Html(_)));
+    assert!(matches!(segs[2], Segment::Html(_)));
+    match &segs[1] {
+        Segment::Embed { name, props } => {
+            assert_eq!(name, "counter");
+            assert_eq!(props.get("start").map(String::as_str), Some("2"));
+        }
+        other => panic!("expected Embed, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_body_handles_bare_and_quoted_props() {
+    let segs = parse_body("[[component:chart data=\"3, 7, 2\" kind=line wide]]");
+    assert_eq!(segs.len(), 1);
+    match &segs[0] {
+        Segment::Embed { name, props } => {
+            assert_eq!(name, "chart");
+            assert_eq!(props.get("data").map(String::as_str), Some("3, 7, 2"));
+            assert_eq!(props.get("kind").map(String::as_str), Some("line"));
+            assert_eq!(props.get("wide").map(String::as_str), Some(""), "bare flag");
+        }
+        other => panic!("expected Embed, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_body_keeps_unknown_component_as_embed() {
+    let segs = parse_body("[[component:nope x=1]]");
+    assert!(
+        matches!(&segs[0], Segment::Embed { name, .. } if name == "nope"),
+        "unknown names still parse to an Embed (the registry renders a fallback): {segs:?}"
+    );
+}
+
+#[test]
+fn parse_body_ignores_non_embed_brackets() {
+    // A normal markdown line that merely contains brackets is prose, not an embed.
+    let segs = parse_body("See [[wiki style]] links and [refs](https://e.com).");
+    assert_eq!(segs.len(), 1);
+    assert!(matches!(segs[0], Segment::Html(_)));
+}
+
 // ---------------------------------------------------------------- email sanity check
 
 #[test]

@@ -175,7 +175,14 @@ fn main() {
         // Serve uploaded media statically from ./uploads.
         std::fs::create_dir_all("uploads").ok();
         let router = dioxus::server::router(App)
-            .nest_service("/uploads", tower_http::services::ServeDir::new("uploads"));
+            .nest_service("/uploads", tower_http::services::ServeDir::new("uploads"))
+            // Public XML endpoints. The shared pool reaches their handlers via
+            // the `Extension<Pool>` that `install()` layers over the whole router.
+            .route(
+                "/sitemap.xml",
+                axum::routing::get(server::feeds::sitemap_handler),
+            )
+            .route("/feed.xml", axum::routing::get(server::feeds::atom_handler));
 
         arium_dioxus::install(router, cfg).await
     });
@@ -190,6 +197,13 @@ fn App() -> Element {
 
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
+        // Atom feed autodiscovery — points readers/browsers at /feed.xml.
+        document::Link {
+            rel: "alternate",
+            r#type: "application/atom+xml",
+            title: "dx-blog feed",
+            href: "/feed.xml",
+        }
         // arium's catalog theme tokens (canonical — no vendored copy).
         document::Stylesheet { href: arium_dioxus::DEFAULT_THEME_CSS }
         document::Stylesheet { href: MAIN_CSS }

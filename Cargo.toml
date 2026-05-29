@@ -16,10 +16,11 @@ dioxus-web = { version = "0.7.9", features = ["hydrate"], optional = true }
 # Timing hooks (use_debounce) — backs the editor's debounced live preview.
 dioxus-sdk-time = "0.7"
 
-# Auth/authz engine + Dioxus adapter (path dep on the local arium workspace).
+# Auth/authz engine + Dioxus adapter, from the arium workspace on GitHub.
 # `default-features = false` so we pick capabilities explicitly. `sql-membership`
 # brings `SqlMembershipStore` + `membership_migrator` for per-post ownership.
-arium-dioxus = { path = "../arium/crates/arium-dioxus", default-features = false, features = [
+# Cargo.lock pins the exact commit; bump with `cargo update -p arium-dioxus`.
+arium-dioxus = { git = "https://github.com/tonybierman/arium", branch = "main", default-features = false, features = [
     "ui",
     "mail",
     "mfa",

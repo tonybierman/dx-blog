@@ -36,7 +36,7 @@ Server-rendered and hydrated, SQLite-backed, styled with Tailwind v4.
 |---|---|
 | UI + server | Dioxus 0.7 Fullstack (axum under the hood) |
 | Database | SQLite via `sqlx` |
-| Auth/authz | `arium-dioxus` (local workspace dependency) |
+| Auth/authz | [`arium-dioxus`](https://github.com/tonybierman/arium) (git dependency) |
 | Styling | Tailwind CSS v4 |
 | Markdown | `pulldown-cmark` + `ammonia` sanitizer |
 
@@ -46,11 +46,9 @@ Server-rendered and hydrated, SQLite-backed, styled with Tailwind v4.
 
 - A recent stable Rust toolchain and the wasm target: `rustup target add wasm32-unknown-unknown`
 - The Dioxus CLI: `cargo install dioxus-cli`
-- **arium** checked out next to this repo — it's a path dependency (`../arium/crates/arium-dioxus`):
 
-  ```sh
-  git clone https://github.com/tonybierman/arium ../arium
-  ```
+> Auth/authz comes from [arium](https://github.com/tonybierman/arium), pulled in as a git
+> dependency — Cargo fetches it automatically, no separate checkout needed.
 
 ### Run
 

@@ -121,6 +121,7 @@ dependencies = [
 [[package]]
 name = "arium"
 version = "0.1.4"
+source = "git+https://github.com/tonybierman/arium?branch=main#5e0e25a9c14e9281187dab48ce07c10deb21b5d1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -149,6 +150,7 @@ dependencies = [
 [[package]]
 name = "arium-authz"
 version = "0.1.4"
+source = "git+https://github.com/tonybierman/arium?branch=main#5e0e25a9c14e9281187dab48ce07c10deb21b5d1"
 dependencies = [
  "anyhow",
  "arium-pool",
@@ -161,6 +163,7 @@ dependencies = [
 [[package]]
 name = "arium-dioxus"
 version = "0.1.4"
+source = "git+https://github.com/tonybierman/arium?branch=main#5e0e25a9c14e9281187dab48ce07c10deb21b5d1"
 dependencies = [
  "anyhow",
  "arium",
@@ -177,6 +180,7 @@ dependencies = [
 [[package]]
 name = "arium-pool"
 version = "0.1.4"
+source = "git+https://github.com/tonybierman/arium?branch=main#5e0e25a9c14e9281187dab48ce07c10deb21b5d1"
 dependencies = [
  "sqlx",
 ]
@@ -184,6 +188,7 @@ dependencies = [
 [[package]]
 name = "arium-wire"
 version = "0.1.4"
+source = "git+https://github.com/tonybierman/arium?branch=main#5e0e25a9c14e9281187dab48ce07c10deb21b5d1"
 dependencies = [
  "serde",
 ]

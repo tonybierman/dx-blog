@@ -12,21 +12,11 @@ use crate::layouts::{
 };
 use crate::model::HomeLayout;
 use crate::pages::widgets::{
-    CategoryList, FeaturedPosts, FeedGrid, FeedSkeleton, PaginationBar, PostCardView,
-    RecentComments, TagList,
+    feed_states, CategoryList, FeaturedPosts, FeedBody, FeedShape, FeedSkeleton, RecentComments,
+    TagList,
 };
 use crate::server::posts::list_posts;
 use crate::server::settings::get_home_layout;
-
-/// How the feed cards are arranged inside the chosen layout. Most layouts render
-/// the feed as a responsive `FeedGrid`; the Bento and Masonry layouts arrange the
-/// cards themselves (and need a full-width pager), mirroring `reader.rs`.
-#[derive(Clone, Copy, PartialEq)]
-enum FeedShape {
-    Grid,
-    Bento,
-    Masonry,
-}
 
 #[component]
 pub fn HomePage() -> Element {
@@ -189,11 +179,18 @@ fn HomeMeta() -> Element {
 
     rsx! {
         document::Title { "{title}" }
-        document::Meta { name: "description", content: "{description}" }
         document::Meta { property: "og:type", content: "website" }
         document::Meta { property: "og:title", content: "{title}" }
-        document::Meta { property: "og:description", content: "{description}" }
-        document::Meta { property: "og:url", content: "{url}" }
+        // Only emit description / og:url when we actually have them — on the
+        // `get_site_meta` error fallback they're empty, and a blank meta tag is
+        // worse than none (it advertises an empty description / a bad URL).
+        if !description.is_empty() {
+            document::Meta { name: "description", content: "{description}" }
+            document::Meta { property: "og:description", content: "{description}" }
+        }
+        if !url.is_empty() {
+            document::Meta { property: "og:url", content: "{url}" }
+        }
     }
 }
 
@@ -205,51 +202,11 @@ fn HomeFeed(shape: FeedShape) -> Element {
     let mut page = use_signal(|| 1i64);
     let posts = use_resource(move || async move { list_posts(page(), None, None).await });
 
-    // Bind the result so the `read()` guard drops at the statement boundary
-    // rather than being held across the function's return.
-    let rendered = match &*posts.read() {
-        Some(Ok(feed)) => {
-            let cards = feed.items.clone();
-            let total_pages = feed.total_pages();
-            match shape {
-                FeedShape::Grid => rsx! {
-                    FeedGrid { cards }
-                    PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
-                },
-                // Tiles + a full-row pager, placed directly inside `BentoGridLayout`'s grid.
-                FeedShape::Bento => rsx! {
-                    for (i , card) in cards.into_iter().enumerate() {
-                        div {
-                            key: "{card.id}",
-                            class: if i == 0 { "col-span-2 row-span-2" } else { "" },
-                            PostCardView { card, fill: true }
-                        }
-                    }
-                    div { style: "grid-column: 1 / -1;",
-                        PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
-                    }
-                },
-                // Column items + a `column-span: all` pager, placed inside `MasonryLayout`.
-                FeedShape::Masonry => rsx! {
-                    for card in cards {
-                        div {
-                            key: "{card.id}",
-                            class: "mb-4 inline-block w-full break-inside-avoid",
-                            PostCardView { card }
-                        }
-                    }
-                    div { style: "column-span: all;",
-                        PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
-                    }
-                },
-            }
+    feed_states!(posts, feed => {
+        let cards = feed.items.clone();
+        let total_pages = feed.total_pages();
+        rsx! {
+            FeedBody { shape, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
         }
-        Some(Err(e)) => rsx! {
-            p { class: "text-red-400", "Failed to load posts: {e}" }
-        },
-        None => rsx! {
-            FeedSkeleton {}
-        },
-    };
-    rendered
+    })
 }

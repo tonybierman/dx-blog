@@ -30,7 +30,7 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
     if posts > 0 {
         return Ok(());
     }
-    println!("[seed] empty blog — seeding demo data (demo authors use the password 'password')");
+    println!("[seed] empty blog — seeding demo data");
 
     // --- Users -------------------------------------------------------------
     // The admin is fully privileged, so it must NEVER get the public, hardcoded
@@ -57,9 +57,29 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
         grant_token(pool, admin, t).await?;
     }
 
+    // The demo authors hold write tokens (POSTS_WRITE/MEDIA_UPLOAD), so a known,
+    // hardcoded password would be a foothold if this ever seeds a shared/staging
+    // DB. In debug builds keep the convenient shared "password" for local demos;
+    // in release require an explicit DX_SEED_DEMO_PASSWORD, else mint a random one
+    // and print it once (same treatment the admin gets).
+    let demo_password = match std::env::var("DX_SEED_DEMO_PASSWORD") {
+        Ok(p) if !p.trim().is_empty() => p,
+        _ if cfg!(debug_assertions) => "password".to_string(),
+        _ => {
+            let generated: String = sqlx::query_scalar("SELECT lower(hex(randomblob(16)))")
+                .fetch_one(pool)
+                .await?;
+            println!(
+                "[seed] generated demo-author password (ada@/linus@example.com): {generated}\n\
+                 [seed]   (set DX_SEED_DEMO_PASSWORD to choose your own; shown only once)"
+            );
+            generated
+        }
+    };
+
     let mut authors = Vec::new();
     for email in ["ada@example.com", "linus@example.com"] {
-        let uid = auth::create_password_user(pool, email, "password").await?;
+        let uid = auth::create_password_user(pool, email, &demo_password).await?;
         auth::mark_email_verified(pool, uid).await?;
         for t in AUTHOR_TOKENS {
             grant_token(pool, uid, t).await?;

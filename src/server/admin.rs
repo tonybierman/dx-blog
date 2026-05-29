@@ -12,7 +12,7 @@ use crate::auth_tokens::{
 };
 #[cfg(feature = "server")]
 use crate::server::{
-    render_markdown, require_perm, sfe, unique_slug, DbExtension, POST_CARD_COLUMNS,
+    create_with_unique_slug, render_markdown, require_perm, sfe, DbExtension, POST_CARD_COLUMNS,
     POST_CARD_JOINS,
 };
 
@@ -27,6 +27,30 @@ fn validate_status(status: &str) -> std::result::Result<(), ServerFnError> {
         Ok(())
     } else {
         Err(ServerFnError::new("Invalid status."))
+    }
+}
+
+/// Validate a post's optional `featured_image_url` before it's stored and later
+/// rendered into `<img src>` and `og:image`. Accept only a same-origin relative
+/// path (`/uploads/…`, our upload sink, or any site path) or an absolute http(s)
+/// URL with a real host. This rejects `javascript:`/`data:`/`mailto:` schemes and
+/// scheme-relative `//host` values — closing the residual SSRF-via-unfurler /
+/// off-origin surface even though the value is gated behind `posts:write`.
+#[cfg(feature = "server")]
+fn validate_featured_image(url: &Option<String>) -> std::result::Result<(), ServerFnError> {
+    let Some(u) = url.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(()); // empty / unset — no image, nothing to validate
+    };
+    let same_origin_path = u.starts_with('/') && !u.starts_with("//");
+    let http_url = matches!(u.split_once("://"), Some((scheme, rest))
+        if (scheme == "http" || scheme == "https")
+            && rest.split('/').next().is_some_and(|host| !host.is_empty() && !host.contains([' ', '\t'])));
+    if same_origin_path || http_url {
+        Ok(())
+    } else {
+        Err(ServerFnError::new(
+            "Featured image must be a site path (starting with /) or an http(s) URL.",
+        ))
     }
 }
 
@@ -73,32 +97,45 @@ pub async fn create_post(
 ) -> Result<i64> {
     let uid = require_perm(&auth, POSTS_WRITE)?;
     validate_status(&status)?;
-    let slug = unique_slug(&db.0, "posts", &title).await.map_err(sfe)?;
+    validate_featured_image(&featured_image_url)?;
     let body_html = render_markdown(&body_md);
 
-    let post_id: i64 = sqlx::query_scalar(
-        r#"
-        INSERT INTO posts
-          (title, slug, body_md, body_html, excerpt, author_id, category_id,
-           featured_image_url, status, published_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
-           CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)
-        RETURNING id
-        "#,
-    )
-    .bind(&title)
-    .bind(&slug)
-    .bind(&body_md)
-    .bind(&body_html)
-    .bind(&excerpt)
-    .bind(uid)
-    .bind(category_id)
-    .bind(&featured_image_url)
-    .bind(&status)
-    .bind(&status)
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
+    // Resolve+insert with a retry so a concurrent same-title create that grabs the
+    // slug first lands us on the next suffix instead of a raw UNIQUE 500.
+    let pool = &db.0;
+    let (title_ref, body_md_ref, body_html_ref, excerpt_ref, image_ref, status_ref) = (
+        &title,
+        &body_md,
+        &body_html,
+        &excerpt,
+        &featured_image_url,
+        &status,
+    );
+    let post_id: i64 = create_with_unique_slug(pool, "posts", &title, |slug| async move {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            INSERT INTO posts
+              (title, slug, body_md, body_html, excerpt, author_id, category_id,
+               featured_image_url, status, published_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+               CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)
+            RETURNING id
+            "#,
+        )
+        .bind(title_ref)
+        .bind(&slug)
+        .bind(body_md_ref)
+        .bind(body_html_ref)
+        .bind(excerpt_ref)
+        .bind(uid)
+        .bind(category_id)
+        .bind(image_ref)
+        .bind(status_ref)
+        .bind(status_ref)
+        .fetch_one(pool)
+        .await
+    })
+    .await?;
 
     set_post_tags(&db.0, post_id, &tag_ids).await?;
 
@@ -133,6 +170,7 @@ pub async fn update_post(
 ) -> Result<()> {
     can_edit_post(&auth, &db.0, &authority, id).await?;
     validate_status(&status)?;
+    validate_featured_image(&featured_image_url)?;
     let body_html = render_markdown(&body_md);
 
     sqlx::query(
@@ -167,33 +205,27 @@ pub async fn update_post(
 #[post("/api/posts/delete", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn delete_post(id: i64) -> Result<()> {
     require_perm(&auth, POSTS_WRITE_ANY)?;
-    sqlx::query("DELETE FROM post_tags WHERE post_id = ?")
-        .bind(id)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
-    sqlx::query("DELETE FROM comments WHERE post_id = ?")
-        .bind(id)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
-    // Recorded views for this post — otherwise they pile up unbounded.
-    sqlx::query("DELETE FROM post_views WHERE post_id = ?")
-        .bind(id)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
-    // Per-post ownership/membership rows (kind='post'); otherwise stale grants linger.
-    sqlx::query("DELETE FROM arium_resource_members WHERE kind = 'post' AND resource_id = ?")
-        .bind(id)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
-    sqlx::query("DELETE FROM posts WHERE id = ?")
-        .bind(id)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
+    // On a current DB the FK `ON DELETE CASCADE` clauses would clear the child
+    // rows for us, but databases created before those constraints were added rely
+    // on these explicit deletes (see the schema header). Run them in one
+    // transaction so a mid-sequence failure can't leave a post half-deleted with
+    // orphaned tags/comments/views/memberships. (arium_resource_members has no FK
+    // to posts, so its rows are never cascaded — this is their only cleanup.)
+    let mut tx = db.0.begin().await.map_err(sfe)?;
+    for sql in [
+        "DELETE FROM post_tags WHERE post_id = ?",
+        "DELETE FROM comments WHERE post_id = ?",
+        "DELETE FROM post_views WHERE post_id = ?",
+        "DELETE FROM arium_resource_members WHERE kind = 'post' AND resource_id = ?",
+        "DELETE FROM posts WHERE id = ?",
+    ] {
+        sqlx::query(sql)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(sfe)?;
+    }
+    tx.commit().await.map_err(sfe)?;
     Ok(())
 }
 
@@ -219,7 +251,10 @@ pub async fn admin_list_posts(
         Some("title") => "p.title COLLATE NOCASE ASC, p.id DESC",
         Some("title_desc") => "p.title COLLATE NOCASE DESC, p.id DESC",
         Some("status") => "p.status ASC, p.updated_at DESC",
+        Some("status_desc") => "p.status DESC, p.updated_at DESC",
         Some("published") => "p.published_at IS NULL, p.published_at DESC, p.id DESC",
+        // Oldest-published first; unpublished (NULL) still sort last.
+        Some("published_desc") => "p.published_at IS NULL, p.published_at ASC, p.id ASC",
         Some("oldest") => "p.updated_at ASC, p.id ASC",
         // "recent" / None / anything unrecognised
         _ => "p.updated_at DESC, p.id DESC",
@@ -319,17 +354,12 @@ pub async fn preview_markdown(md: String) -> Result<String> {
 #[post("/api/admin/comments", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn admin_list_comments(status: Option<String>) -> Result<Vec<CommentView>> {
     require_perm(&auth, COMMENTS_MODERATE)?;
-    let rows = sqlx::query_as::<_, CommentView>(
-        r#"
-        SELECT cm.id, cm.post_id,
-               COALESCE(u.display_name, u.username, cm.guest_name, 'Anonymous') AS display_name,
-               cm.body, cm.status, cm.created_at
-        FROM comments cm
-        LEFT JOIN users u ON u.id = cm.author_id
-        WHERE (? IS NULL OR cm.status = ?)
-        ORDER BY cm.created_at DESC
-        "#,
-    )
+    use crate::server::comments::{COMMENT_VIEW_COLUMNS, COMMENT_VIEW_FROM};
+    let rows = sqlx::query_as::<_, CommentView>(&format!(
+        "SELECT {COMMENT_VIEW_COLUMNS} {COMMENT_VIEW_FROM} \
+         WHERE (? IS NULL OR cm.status = ?) \
+         ORDER BY cm.created_at DESC"
+    ))
     .bind(&status)
     .bind(&status)
     .fetch_all(&db.0)
@@ -369,16 +399,21 @@ pub async fn delete_comment(id: i64) -> Result<()> {
 #[post("/api/admin/categories/create", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn create_category(name: String, description: Option<String>) -> Result<Category> {
     require_perm(&auth, SETTINGS_WRITE)?;
-    let slug = unique_slug(&db.0, "categories", &name).await.map_err(sfe)?;
-    let id: i64 = sqlx::query_scalar(
-        "INSERT INTO categories (name, slug, description) VALUES (?, ?, ?) RETURNING id",
-    )
-    .bind(&name)
-    .bind(&slug)
-    .bind(&description)
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
+    let pool = &db.0;
+    let (name_ref, description_ref) = (&name, &description);
+    let (id, slug): (i64, String) =
+        create_with_unique_slug(pool, "categories", &name, |slug| async move {
+            let id = sqlx::query_scalar::<_, i64>(
+                "INSERT INTO categories (name, slug, description) VALUES (?, ?, ?) RETURNING id",
+            )
+            .bind(name_ref)
+            .bind(&slug)
+            .bind(description_ref)
+            .fetch_one(pool)
+            .await?;
+            Ok((id, slug))
+        })
+        .await?;
     Ok(Category {
         id,
         name,
@@ -427,13 +462,20 @@ pub async fn rename_category(id: i64, name: String) -> Result<()> {
 #[post("/api/admin/tags/create", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn create_tag(name: String) -> Result<Tag> {
     require_perm(&auth, SETTINGS_WRITE)?;
-    let slug = unique_slug(&db.0, "tags", &name).await.map_err(sfe)?;
-    let id: i64 = sqlx::query_scalar("INSERT INTO tags (name, slug) VALUES (?, ?) RETURNING id")
-        .bind(&name)
-        .bind(&slug)
-        .fetch_one(&db.0)
-        .await
-        .map_err(sfe)?;
+    let pool = &db.0;
+    let name_ref = &name;
+    let (id, slug): (i64, String) =
+        create_with_unique_slug(pool, "tags", &name, |slug| async move {
+            let id = sqlx::query_scalar::<_, i64>(
+                "INSERT INTO tags (name, slug) VALUES (?, ?) RETURNING id",
+            )
+            .bind(name_ref)
+            .bind(&slug)
+            .fetch_one(pool)
+            .await?;
+            Ok((id, slug))
+        })
+        .await?;
     Ok(Tag { id, name, slug })
 }
 

@@ -30,8 +30,15 @@ pub type DbExtension = axum::Extension<arium_dioxus::pool::Pool>;
 pub type MailExtension = axum::Extension<arium_dioxus::Mailer>;
 
 /// Map any server-side error to a `ServerFnError` for return from server fns.
+///
+/// The real error is logged server-side but NOT sent to the client: a raw sqlx
+/// error string leaks schema, table, and constraint detail to anyone who can hit
+/// an endpoint. Callers that want a specific, safe message (validation, "not
+/// found", …) build a `ServerFnError::new(...)` directly instead of routing
+/// through `sfe`.
 pub fn sfe<E: std::fmt::Display>(e: E) -> ServerFnError {
-    ServerFnError::new(e.to_string())
+    eprintln!("[server] error: {e}");
+    ServerFnError::new("Something went wrong. Please try again.")
 }
 
 /// Require the current session to hold a global permission token. Returns the
@@ -133,4 +140,43 @@ pub async fn unique_slug(
         candidate = format!("{base}-{n}");
         n += 1;
     }
+}
+
+/// Resolve a unique slug for `name` in `table`, then run `insert(slug)` — and if
+/// a concurrent creator grabbed that same slug in the check-then-insert gap (a
+/// `UNIQUE` violation on the slug column), recompute and retry a bounded number
+/// of times. Without this, two simultaneous "create with the same title" calls
+/// both see the slug free, and the loser's INSERT surfaces a raw 500 instead of
+/// quietly landing on `-2`. Non-unique-violation errors propagate immediately.
+#[cfg(feature = "server")]
+pub async fn create_with_unique_slug<T, F, Fut>(
+    pool: &arium_dioxus::pool::Pool,
+    table: &str,
+    name: &str,
+    mut insert: F,
+) -> Result<T, ServerFnError>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
+{
+    const MAX_ATTEMPTS: usize = 5;
+    for attempt in 0..MAX_ATTEMPTS {
+        let slug = unique_slug(pool, table, name).await.map_err(sfe)?;
+        match insert(slug).await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                let collided = e
+                    .as_database_error()
+                    .is_some_and(|d| d.is_unique_violation());
+                if collided && attempt + 1 < MAX_ATTEMPTS {
+                    continue;
+                }
+                return Err(sfe(e));
+            }
+        }
+    }
+    // The loop only falls through after MAX_ATTEMPTS unique-violation retries.
+    Err(ServerFnError::new(
+        "Couldn't allocate a unique slug; please retry.",
+    ))
 }

@@ -15,29 +15,44 @@ use std::str::FromStr;
 /// keeps every query on the same `:memory:` database (separate connections would
 /// each get their own empty one).
 ///
-/// Foreign keys are turned OFF here: sqlx defaults them ON, but these tests apply
-/// only the blog schema, not arium's `users` table that `posts.author_id` (and
-/// friends) now reference — so a bare `author_id` would otherwise trip the FK.
+/// Foreign keys are turned ON to match production (`main.rs`), so the schema's
+/// `REFERENCES … ON DELETE` clauses are actually exercised. The blog schema
+/// references arium's `users` table, which these tests don't run arium's migrator
+/// for, so we stand up a minimal `users(id)` parent first and seed the author ids
+/// the fixtures attribute rows to.
 async fn test_pool() -> Pool {
     let opts = SqliteConnectOptions::from_str("sqlite::memory:")
         .expect("parse in-memory url")
-        .foreign_keys(false);
+        .foreign_keys(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(opts)
         .await
         .expect("open in-memory sqlite");
+    // Stand-in for arium's `users` table — only `id` is referenced by the blog
+    // schema's FKs. Created before the blog schema so those REFERENCES resolve.
+    sqlx::query("CREATE TABLE users (id INTEGER PRIMARY KEY)")
+        .execute(&pool)
+        .await
+        .expect("create users stub");
     sqlx::raw_sql(include_str!("../../migrations/0001_blog.sql"))
         .execute(&pool)
         .await
         .expect("apply blog schema");
+    // Author rows the fixtures attribute posts/comments to.
+    for id in [1_i64, 2] {
+        sqlx::query("INSERT INTO users (id) VALUES (?)")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("seed user");
+    }
     pool
 }
 
-/// Insert a minimal post row (enough columns to satisfy NOT NULLs). Returns id.
+/// Insert a minimal post row (enough columns to satisfy NOT NULLs), attributed
+/// to seeded user 1. Returns nothing; the first post inserted has id 1.
 async fn insert_post(pool: &Pool, title: &str, slug: &str) {
-    // author_id references arium's users in production; FK enforcement is off in
-    // test_pool (no users table here), so a bare id is fine for these unit tests.
     sqlx::query("INSERT INTO posts (title, slug, author_id) VALUES (?, ?, 1)")
         .bind(title)
         .bind(slug)
@@ -163,6 +178,8 @@ async fn has_prior_approved(pool: &Pool, author_id: i64) -> bool {
 #[tokio::test]
 async fn returning_approved_commenter_is_recognized() {
     let pool = test_pool().await;
+    // A post for the comments to hang off (FKs are enforced now). First insert → id 1.
+    insert_post(&pool, "Post", "post").await;
     // Author 1 already has an approved comment; author 2 only a pending one.
     sqlx::query(
         "INSERT INTO comments (post_id, author_id, body, status) VALUES (1, 1, 'hi', 'approved')",
@@ -189,4 +206,37 @@ async fn returning_approved_commenter_is_recognized() {
         !has_prior_approved(&pool, 99).await,
         "unknown author stays pending"
     );
+}
+
+// ---------------------------------------------------------------- FK cascade
+
+/// With foreign keys enabled, deleting a post should cascade to its dependent
+/// rows (here: comments via `ON DELETE CASCADE`). This exercises the schema
+/// constraint that `delete_post`'s hand-rolled deletes are only a fallback for.
+#[tokio::test]
+async fn deleting_post_cascades_to_comments() {
+    let pool = test_pool().await;
+    insert_post(&pool, "Post", "post").await; // id 1
+    sqlx::query(
+        "INSERT INTO comments (post_id, author_id, body, status) VALUES (1, 1, 'hi', 'approved')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM comments")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(before, 1, "comment should be inserted");
+
+    sqlx::query("DELETE FROM posts WHERE id = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM comments")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(after, 0, "deleting the post should cascade to its comments");
 }

@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS comments (
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_comments_post_status ON comments(post_id, status);
+-- Home "recent approved comments" reads filter by status and order by created_at
+-- across all posts; this covers that path (idx_comments_post_status is keyed on
+-- post_id first, so it can't serve the post-agnostic recent query).
+CREATE INDEX IF NOT EXISTS idx_comments_status_created ON comments(status, created_at);
 
 CREATE TABLE IF NOT EXISTS subscribers (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,6 +101,13 @@ CREATE TABLE IF NOT EXISTS post_views (
     visitor_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_post_views_post ON post_views(post_id);
+-- The per-view 24h dedup probe in analytics::record_view filters on
+-- (post_id, visitor_hash, viewed_at); this composite lets it seek instead of
+-- scanning a post's whole view history on every page view.
+CREATE INDEX IF NOT EXISTS idx_post_views_dedup
+    ON post_views(post_id, visitor_hash, viewed_at);
+-- views-over-time filters by viewed_at alone across all posts.
+CREATE INDEX IF NOT EXISTS idx_post_views_viewed_at ON post_views(viewed_at);
 
 -- Blog-specific profile fields (arium's users already has display_name/avatar_url).
 CREATE TABLE IF NOT EXISTS user_profiles (

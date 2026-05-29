@@ -33,23 +33,45 @@ pub async fn subscribe(email: String) -> Result<()> {
         return Ok(());
     }
 
+    // Anti-abuse: this endpoint is anonymous, so without a gate anyone could call
+    // it on a loop to relay confirmation mail to an arbitrary address (an email
+    // bomb). If a pending token was issued for this subscriber within the cooldown
+    // window, silently succeed without minting a new token or re-mailing. The
+    // caller can't tell a fresh row from a throttled one, so this leaks nothing.
+    let recently_mailed: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM subscriber_tokens \
+         WHERE subscriber_id = ? AND created_at >= datetime('now', ?) LIMIT 1",
+    )
+    .bind(sub_id)
+    .bind(RESEND_COOLDOWN)
+    .fetch_optional(&db.0)
+    .await
+    .map_err(sfe)?;
+    if recently_mailed.is_some() {
+        return Ok(());
+    }
+
     // Issue a fresh token (SQLite's randomblob avoids pulling in a rand crate),
-    // replacing any earlier pending token for this subscriber.
+    // replacing any earlier pending token for this subscriber. The delete+insert
+    // run in one transaction so a concurrent caller can't observe (or mail) a
+    // half-rotated state where the old token is gone but the new one isn't in yet.
     let token: String = sqlx::query_scalar("SELECT lower(hex(randomblob(16)))")
         .fetch_one(&db.0)
         .await
         .map_err(sfe)?;
+    let mut tx = db.0.begin().await.map_err(sfe)?;
     sqlx::query("DELETE FROM subscriber_tokens WHERE subscriber_id = ?")
         .bind(sub_id)
-        .execute(&db.0)
+        .execute(&mut *tx)
         .await
         .map_err(sfe)?;
     sqlx::query("INSERT INTO subscriber_tokens (token, subscriber_id) VALUES (?, ?)")
         .bind(&token)
         .bind(sub_id)
-        .execute(&db.0)
+        .execute(&mut *tx)
         .await
         .map_err(sfe)?;
+    tx.commit().await.map_err(sfe)?;
 
     // Send the confirmation email. A flaky mailer must not fail the request —
     // mirror arium's auth flows and just log on error.
@@ -78,6 +100,13 @@ pub async fn subscribe(email: String) -> Result<()> {
 #[cfg(feature = "server")]
 const TOKEN_TTL: &str = "-7 days";
 
+/// Minimum gap between confirmation-email re-sends for one (unconfirmed)
+/// subscriber. A second `subscribe` within this window is accepted but neither
+/// re-tokenizes nor re-mails — the throttle that turns the anonymous endpoint
+/// from an email-relay into a no-op under repeat calls.
+#[cfg(feature = "server")]
+const RESEND_COOLDOWN: &str = "-5 minutes";
+
 /// Consume a confirmation token, marking the subscriber confirmed. Returns
 /// `true` when an unexpired token matched, `false` when it was unknown or older
 /// than [`TOKEN_TTL`].
@@ -102,16 +131,21 @@ pub async fn confirm_subscription(token: String) -> Result<bool> {
         return Ok(false);
     };
 
+    // Flip the flag and consume every token for this subscriber in one
+    // transaction: a crash between the two used to leave a confirmed subscriber
+    // with a live token still redeemable.
+    let mut tx = db.0.begin().await.map_err(sfe)?;
     sqlx::query("UPDATE subscribers SET confirmed = 1 WHERE id = ?")
         .bind(sub_id)
-        .execute(&db.0)
+        .execute(&mut *tx)
         .await
         .map_err(sfe)?;
     sqlx::query("DELETE FROM subscriber_tokens WHERE subscriber_id = ?")
         .bind(sub_id)
-        .execute(&db.0)
+        .execute(&mut *tx)
         .await
         .map_err(sfe)?;
+    tx.commit().await.map_err(sfe)?;
 
     Ok(true)
 }

@@ -2,10 +2,24 @@
 
 use dioxus::prelude::*;
 
-use crate::model::{page_offset, PostDetail, PostFeed, PER_PAGE};
+use crate::model::{PostDetail, PostFeed};
+// Used only inside the server-fn bodies, which compile out on the wasm client.
+#[cfg(feature = "server")]
+use crate::model::{page_offset, PER_PAGE};
 
 #[cfg(feature = "server")]
 use crate::server::{sfe, DbExtension, POST_CARD_COLUMNS, POST_CARD_JOINS};
+
+/// Shared WHERE clause for the published-feed list + its COUNT companion: only
+/// published posts, optionally narrowed by category slug and/or tag slug. Bind
+/// order is `(category_slug, category_slug, tag_slug, tag_slug)` in both queries.
+/// Kept in one place so the filter and its count can't drift apart.
+#[cfg(feature = "server")]
+const LIST_POSTS_WHERE: &str = "WHERE p.status = 'published' \
+     AND (? IS NULL OR c.slug = ?) \
+     AND (? IS NULL OR EXISTS ( \
+           SELECT 1 FROM post_tags pt JOIN tags t ON t.id = pt.tag_id \
+           WHERE pt.post_id = p.id AND t.slug = ?))";
 
 /// Paginated published-post feed, optionally filtered by category or tag slug.
 #[post("/api/posts", db: DbExtension)]
@@ -19,12 +33,7 @@ pub async fn list_posts(
     let (page, offset) = page_offset(page);
 
     let items = sqlx::query_as::<_, PostCard>(&format!(
-        "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} \
-         WHERE p.status = 'published' \
-           AND (? IS NULL OR c.slug = ?) \
-           AND (? IS NULL OR EXISTS ( \
-                 SELECT 1 FROM post_tags pt JOIN tags t ON t.id = pt.tag_id \
-                 WHERE pt.post_id = p.id AND t.slug = ?)) \
+        "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} {LIST_POSTS_WHERE} \
          ORDER BY p.published_at DESC, p.id DESC \
          LIMIT ? OFFSET ?"
     ))
@@ -38,18 +47,9 @@ pub async fn list_posts(
     .await
     .map_err(sfe)?;
 
-    let total: i64 = sqlx::query_scalar(
-        r#"
-        SELECT COUNT(*)
-        FROM posts p
-        LEFT JOIN categories c ON c.id = p.category_id
-        WHERE p.status = 'published'
-          AND (? IS NULL OR c.slug = ?)
-          AND (? IS NULL OR EXISTS (
-                SELECT 1 FROM post_tags pt JOIN tags t ON t.id = pt.tag_id
-                WHERE pt.post_id = p.id AND t.slug = ?))
-        "#,
-    )
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM posts p {POST_CARD_JOINS} {LIST_POSTS_WHERE}"
+    ))
     .bind(&category_slug)
     .bind(&category_slug)
     .bind(&tag_slug)

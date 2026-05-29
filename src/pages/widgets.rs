@@ -29,6 +29,61 @@ macro_rules! sidebar_states {
     };
 }
 
+/// The loaded / error / loading arms of an admin list `Resource<Result<Vec<_>>>`.
+/// Each call only spells out its non-empty `$list => $body` case and the empty
+/// message; the error and "Loading…" arms — identical across the admin pages —
+/// live here once. `$list` is `.clone()`d so the body owns it and the read guard
+/// is released before render. (The richer-styled reader feeds use `feed_states!`.)
+macro_rules! list_states {
+    ($res:expr, empty: $empty:expr, $list:ident => $body:expr) => {{
+        // Bound to a local so the `read()` guard's temporary is dropped at the
+        // statement boundary rather than living to the end of the caller's block
+        // (which would outlive the resource and fail to borrow-check at a tail
+        // position).
+        let states = match &*$res.read() {
+            Some(Ok($list)) if !$list.is_empty() => {
+                let $list = $list.clone();
+                $body
+            }
+            Some(Ok(_)) => rsx! { p { class: "text-white/50", {$empty} } },
+            Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+            None => rsx! { p { class: "text-white/50", "Loading…" } },
+        };
+        states
+    }};
+}
+pub(crate) use list_states;
+
+/// The loaded / error / loading arms of a paginated post feed
+/// `Resource<Result<PostFeed>>`. The loaded `PostFeed` is bound to `$feed` (by
+/// reference) for the body to read `.items`/`.total`/`.total_pages()`; the error
+/// arm shows an inline message and the loading arm a `FeedSkeleton`. Empty feeds
+/// aren't special-cased — `FeedBody`/`FeedGrid` render the "No posts yet." note.
+macro_rules! feed_states {
+    ($res:expr, $feed:ident => $body:expr) => {{
+        // See `list_states!` — bound to a local so the read guard drops before
+        // the caller's block ends.
+        let states = match &*$res.read() {
+            Some(Ok($feed)) => $body,
+            Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
+            None => rsx! { FeedSkeleton {} },
+        };
+        states
+    }};
+}
+pub(crate) use feed_states;
+
+/// How a feed's cards are arranged inside its layout. Most layouts render a
+/// responsive [`FeedGrid`]; Bento and Masonry arrange the cards themselves and
+/// need a full-width pager. Shared by the home page and the reader feeds so both
+/// render through one [`FeedBody`].
+#[derive(Clone, Copy, PartialEq)]
+pub enum FeedShape {
+    Grid,
+    Bento,
+    Masonry,
+}
+
 /// Sidebar listing categories as links to their feeds.
 #[component]
 pub fn CategoryList() -> Element {
@@ -255,5 +310,51 @@ pub fn FeedGrid(cards: Vec<PostCard>) -> Element {
                 PostCardView { key: "{card.id}", card }
             }
         }
+    }
+}
+
+/// A page of feed cards plus its pager, arranged per [`FeedShape`]. This is the
+/// one place the Grid / Bento / Masonry card+pager markup lives — the home page
+/// and every reader feed render through it instead of repeating the layout-
+/// specific `grid-column: 1 / -1` / `column-span: all` pager wrappers.
+#[component]
+pub fn FeedBody(
+    shape: FeedShape,
+    cards: Vec<PostCard>,
+    page: i64,
+    total_pages: i64,
+    on_change: EventHandler<i64>,
+) -> Element {
+    match shape {
+        FeedShape::Grid => rsx! {
+            FeedGrid { cards }
+            PaginationBar { page, total_pages, on_change }
+        },
+        // Tiles + a full-row pager, placed directly inside `BentoGridLayout`'s grid.
+        FeedShape::Bento => rsx! {
+            for (i , card) in cards.into_iter().enumerate() {
+                div {
+                    key: "{card.id}",
+                    class: if i == 0 { "col-span-2 row-span-2" } else { "" },
+                    PostCardView { card, fill: true }
+                }
+            }
+            div { style: "grid-column: 1 / -1;",
+                PaginationBar { page, total_pages, on_change }
+            }
+        },
+        // Column items + a `column-span: all` pager, placed inside `MasonryLayout`.
+        FeedShape::Masonry => rsx! {
+            for card in cards {
+                div {
+                    key: "{card.id}",
+                    class: "mb-4 inline-block w-full break-inside-avoid",
+                    PostCardView { card }
+                }
+            }
+            div { style: "column-span: all;",
+                PaginationBar { page, total_pages, on_change }
+            }
+        },
     }
 }

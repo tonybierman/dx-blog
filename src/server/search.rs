@@ -2,7 +2,10 @@
 
 use dioxus::prelude::*;
 
-use crate::model::{page_offset, PostFeed, PER_PAGE};
+use crate::model::PostFeed;
+// Used only inside the server-fn body, which compiles out on the wasm client.
+#[cfg(feature = "server")]
+use crate::model::{page_offset, PER_PAGE};
 
 #[cfg(feature = "server")]
 use crate::server::{sfe, DbExtension, POST_CARD_COLUMNS, POST_CARD_JOINS};

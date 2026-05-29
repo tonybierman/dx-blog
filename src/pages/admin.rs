@@ -12,6 +12,7 @@ use arium_dioxus::ui::{Policy, RequirePermission};
 
 use crate::auth_tokens::ADMIN_NAV_TOKENS;
 use crate::model::{AnalyticsSummary, HomeLayout, PostEditData, POST_STATUSES, STATUS_DRAFT};
+use crate::pages::widgets::list_states;
 use crate::server::admin::*;
 use crate::server::analytics::{analytics_summary, top_posts, top_referrers, views_over_time};
 use crate::server::settings::{
@@ -23,6 +24,24 @@ use crate::Route;
 
 fn admin_any_policy() -> Policy {
     Policy::any_of(ADMIN_NAV_TOKENS)
+}
+
+/// Run a fire-and-forget save and report its outcome into a status signal:
+/// `ok_msg` on success, the friendly server error on failure. Collapses the
+/// `spawn { match fut.await { Ok => set(ok), Err => set(friendly) } }` block the
+/// settings savers all repeated (the two `ThemeSelector` savers were identical).
+fn save_with_status(
+    fut: impl Future<Output = Result<()>> + 'static,
+    mut status: Signal<String>,
+    ok_msg: impl Into<String>,
+) {
+    let ok_msg = ok_msg.into();
+    spawn(async move {
+        match fut.await {
+            Ok(()) => status.set(ok_msg),
+            Err(e) => status.set(arium_dioxus::friendly_server_error(e)),
+        }
+    });
 }
 
 fn nav_class(active: &str, name: &str) -> &'static str {
@@ -237,10 +256,7 @@ pub fn AdminPostList() -> Element {
                     option { value: "published", selected: sort() == "published", "Published date" }
                 }
             }
-            match &*posts.read() {
-                Some(Ok(list)) if !list.is_empty() => {
-                    let list = list.clone();
-                    rsx! {
+            {list_states!(posts, empty: "No posts yet.", list => rsx! {
                         table { class: "w-full text-left text-sm",
                             thead { class: "border-b border-white/10 text-white/50",
                                 tr {
@@ -250,11 +266,11 @@ pub fn AdminPostList() -> Element {
                                     }
                                     th {
                                         button { class: "font-medium hover:text-white",
-                                            onclick: move |_| toggle_sort("status", "status"), "Status" }
+                                            onclick: move |_| toggle_sort("status", "status_desc"), "Status" }
                                     }
                                     th {
                                         button { class: "font-medium hover:text-white",
-                                            onclick: move |_| toggle_sort("published", "published"), "Published" }
+                                            onclick: move |_| toggle_sort("published", "published_desc"), "Published" }
                                     }
                                     th { "" }
                                 }
@@ -283,12 +299,7 @@ pub fn AdminPostList() -> Element {
                                 }
                             }
                         }
-                    }
-                }
-                Some(Ok(_)) => rsx! { p { class: "text-white/50", "No posts yet." } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
-            }
+            })}
         }
     }
 }
@@ -371,6 +382,14 @@ fn EditorForm(initial: PostEditData) -> Element {
     let mut excerpt = use_signal(|| initial.excerpt.clone());
     let mut body = use_signal(|| initial.body_md.clone());
     let mut featured = use_signal(|| initial.featured_image_url.clone().unwrap_or_default());
+    // The featured-image thumbnail keys off a debounced copy of `featured` so it
+    // doesn't fire an image request (and flash a broken icon) on every keystroke
+    // while a URL is being typed — same pattern as the markdown preview below.
+    let mut featured_preview =
+        use_signal(|| initial.featured_image_url.clone().unwrap_or_default());
+    let mut debounce_featured = use_debounce(Duration::from_millis(400), move |v: String| {
+        featured_preview.set(v)
+    });
     let mut category_id = use_signal(|| initial.category_id);
     let mut status = use_signal(|| initial.status.clone());
     let mut selected_tags = use_signal(|| initial.tag_ids.clone());
@@ -442,7 +461,11 @@ fn EditorForm(initial: PostEditData) -> Element {
                             class: "flex-1 rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
                             placeholder: "Featured image URL",
                             value: "{featured}",
-                            oninput: move |e| featured.set(e.value()),
+                            oninput: move |e| {
+                                let v = e.value();
+                                featured.set(v.clone());
+                                debounce_featured.action(v);
+                            },
                         }
                         button {
                             r#type: "button",
@@ -451,8 +474,8 @@ fn EditorForm(initial: PostEditData) -> Element {
                             if show_media_picker() { "Close" } else { "Library" }
                         }
                     }
-                    if !featured().trim().is_empty() {
-                        img { class: "h-24 rounded border border-white/10 object-cover", src: "{featured}", alt: "Featured preview" }
+                    if !featured_preview().trim().is_empty() {
+                        img { class: "h-24 rounded border border-white/10 object-cover", src: "{featured_preview}", alt: "Featured preview" }
                     }
                     if show_media_picker() {
                         div { class: "rounded border border-white/10 bg-white/[0.03] p-2",
@@ -468,7 +491,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                                                         r#type: "button",
                                                         class: "overflow-hidden rounded border border-white/10 hover:border-brand-400",
                                                         title: "{m.filename}",
-                                                        onclick: move |_| { featured.set(url.clone()); show_media_picker.set(false); },
+                                                        onclick: move |_| { featured.set(url.clone()); featured_preview.set(url.clone()); show_media_picker.set(false); },
                                                         img { class: "h-16 w-full object-cover", src: "{m.url}", alt: "{m.filename}" }
                                                     }
                                                 }
@@ -564,10 +587,7 @@ pub fn AdminComments() -> Element {
     rsx! {
         AdminShell { active: "comments".to_string(),
             h1 { class: "mb-6 text-2xl font-bold", "Comment moderation" }
-            match &*comments.read() {
-                Some(Ok(list)) if !list.is_empty() => {
-                    let list = list.clone();
-                    rsx! {
+            {list_states!(comments, empty: "No comments.", list => rsx! {
                         div { class: "space-y-3",
                             for c in list {
                                 div { key: "{c.id}", class: "rounded-lg border border-white/10 p-3",
@@ -602,12 +622,7 @@ pub fn AdminComments() -> Element {
                                 }
                             }
                         }
-                    }
-                }
-                Some(Ok(_)) => rsx! { p { class: "text-white/50", "No comments." } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
-            }
+            })}
         }
     }
 }
@@ -663,10 +678,9 @@ pub fn AdminMedia() -> Element {
                 button { class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", onclick: upload, "Upload" }
                 if !msg().is_empty() { span { class: "text-sm text-white/60", "{msg}" } }
             }
-            match &*media.read() {
-                Some(Ok(list)) if !list.is_empty() => rsx! {
+            {list_states!(media, empty: "No media yet.", list => rsx! {
                     div { class: "columns-2 gap-4 md:columns-3 lg:columns-4",
-                        for m in list.clone() {
+                        for m in list {
                             div { key: "{m.id}", class: "mb-4 inline-block w-full break-inside-avoid rounded-lg border border-white/10 p-2",
                                 img { class: "w-full rounded", src: "{m.url}", alt: "{m.filename}" }
                                 div { class: "mt-1 flex items-center justify-between gap-2",
@@ -697,11 +711,7 @@ pub fn AdminMedia() -> Element {
                             }
                         }
                     }
-                },
-                Some(Ok(_)) => rsx! { p { class: "text-white/50", "No media yet." } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
-            }
+            })}
         }
     }
 }
@@ -744,7 +754,16 @@ fn preview_hue(mut hue: Signal<i64>, h: i64) {
 fn ThemeSelector() -> Element {
     let saved = use_resource(get_theme_hue);
     let mut hue = use_signal(|| DEFAULT_THEME_HUE);
-    let mut msg = use_signal(String::new);
+    // `msg` is `Copy` and written only inside `save_with_status`, so it needn't be `mut` here.
+    let msg = use_signal(String::new);
+
+    // Persist the hue through a debounce so a flurry of preset clicks / slider
+    // releases collapses to a single save of the final value — overlapping
+    // `set_theme_hue` spawns could otherwise land out of order and persist a
+    // stale hue. Live preview (preview_hue) stays instant; only the save waits.
+    let mut save_hue = use_debounce(Duration::from_millis(300), move |h: i64| {
+        save_with_status(set_theme_hue(h), msg, "Saved.");
+    });
 
     // Sync the control to the stored hue once it loads.
     use_effect(move || {
@@ -782,12 +801,7 @@ fn ThemeSelector() -> Element {
                         },
                         onclick: move |_| {
                             preview_hue(hue, h);
-                            spawn(async move {
-                                match set_theme_hue(h).await {
-                                    Ok(()) => msg.set("Saved.".into()),
-                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
-                                }
-                            });
+                            save_hue.action(h);
                         },
                         span {
                             class: "inline-block h-3 w-3 rounded-full",
@@ -810,12 +824,7 @@ fn ThemeSelector() -> Element {
                     onchange: move |e| {
                         if let Ok(h) = e.value().parse::<i64>() {
                             preview_hue(hue, h);
-                            spawn(async move {
-                                match set_theme_hue(h).await {
-                                    Ok(()) => msg.set("Saved.".into()),
-                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
-                                }
-                            });
+                            save_hue.action(h);
                         }
                     },
                 }
@@ -839,7 +848,7 @@ fn ThemeSelector() -> Element {
 fn HomeLayoutSelector() -> Element {
     let saved = use_resource(get_home_layout);
     let mut current = use_signal(HomeLayout::default);
-    let mut msg = use_signal(String::new);
+    let msg = use_signal(String::new);
 
     // Sync the control to the stored layout once it loads.
     use_effect(move || {
@@ -866,12 +875,7 @@ fn HomeLayoutSelector() -> Element {
                         },
                         onclick: move |_| {
                             current.set(layout);
-                            spawn(async move {
-                                match set_home_layout(layout).await {
-                                    Ok(()) => msg.set(format!("Saved “{}”.", layout.label())),
-                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
-                                }
-                            });
+                            save_with_status(set_home_layout(layout), msg, format!("Saved “{}”.", layout.label()));
                         },
                         {layout_thumb(layout)}
                         span { class: "text-xs font-medium", "{layout.label()}" }

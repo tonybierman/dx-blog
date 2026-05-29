@@ -14,7 +14,10 @@
 
 #![cfg(feature = "server")]
 
-use axum::{http::header, response::IntoResponse};
+use axum::{
+    http::{header, StatusCode},
+    response::IntoResponse,
+};
 
 use crate::model::to_rfc3339;
 use crate::server::DbExtension;
@@ -88,7 +91,7 @@ fn xml_escape(s: &str) -> String {
 
 /// `GET /sitemap.xml` — the home and archive landing pages, every published
 /// post, plus each category / tag / author index that has published content.
-pub async fn sitemap_handler(db: DbExtension) -> impl IntoResponse {
+pub async fn sitemap_handler(db: DbExtension) -> Result<impl IntoResponse, StatusCode> {
     let pool = &db.0;
     let base = site_base();
 
@@ -109,7 +112,10 @@ pub async fn sitemap_handler(db: DbExtension) -> impl IntoResponse {
     )
     .fetch_all(pool)
     .await
-    .unwrap_or_default();
+    .map_err(|e| {
+        eprintln!("[sitemap] WARN: posts query failed: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     for (slug, lastmod) in posts {
         urls.push((format!("{base}/post/{slug}"), Some(to_rfc3339(&lastmod))));
     }
@@ -122,7 +128,10 @@ pub async fn sitemap_handler(db: DbExtension) -> impl IntoResponse {
         let slugs = sqlx::query_scalar::<_, String>(sql)
             .fetch_all(pool)
             .await
-            .unwrap_or_default();
+            .map_err(|e| {
+                eprintln!("[sitemap] WARN: {prefix} slugs query failed: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
         for slug in slugs {
             urls.push((format!("{base}/{prefix}/{slug}"), None));
         }
@@ -140,7 +149,10 @@ pub async fn sitemap_handler(db: DbExtension) -> impl IntoResponse {
     )
     .fetch_all(pool)
     .await
-    .unwrap_or_default();
+    .map_err(|e| {
+        eprintln!("[sitemap] WARN: authors query failed: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     for username in authors {
         urls.push((format!("{base}/author/{username}"), None));
     }
@@ -161,10 +173,10 @@ pub async fn sitemap_handler(db: DbExtension) -> impl IntoResponse {
     }
     body.push_str("</urlset>\n");
 
-    (
+    Ok((
         [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
         body,
-    )
+    ))
 }
 
 #[derive(sqlx::FromRow)]
@@ -180,7 +192,7 @@ struct FeedRow {
 
 /// `GET /feed.xml` — an Atom 1.0 feed of the most recent published posts, with
 /// the full rendered HTML carried in each entry's `<content>`.
-pub async fn atom_handler(db: DbExtension) -> impl IntoResponse {
+pub async fn atom_handler(db: DbExtension) -> Result<impl IntoResponse, StatusCode> {
     let pool = &db.0;
     let base = site_base();
     let title = site_title(pool).await;
@@ -201,7 +213,10 @@ pub async fn atom_handler(db: DbExtension) -> impl IntoResponse {
     .bind(FEED_LIMIT)
     .fetch_all(pool)
     .await
-    .unwrap_or_default();
+    .map_err(|e| {
+        eprintln!("[feed] WARN: posts query failed: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     // Feed-level <updated> = newest entry's timestamp (updated, else published).
     // Atom requires the element even for an empty feed, so fall back to epoch.
@@ -284,8 +299,8 @@ pub async fn atom_handler(db: DbExtension) -> impl IntoResponse {
 
     body.push_str("</feed>\n");
 
-    (
+    Ok((
         [(header::CONTENT_TYPE, "application/atom+xml; charset=utf-8")],
         body,
-    )
+    ))
 }

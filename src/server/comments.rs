@@ -17,6 +17,30 @@ const MAX_NAME_LEN: usize = 100;
 #[cfg(feature = "server")]
 const MAX_EMAIL_LEN: usize = 254;
 
+/// Per-commenter cooldown: one identity (logged-in id, else guest email) can't
+/// post to the same post more than once within this window.
+#[cfg(feature = "server")]
+const COMMENT_COOLDOWN: &str = "-30 seconds";
+/// Burst cap: how many comments a single post may accrue inside
+/// [`POST_BURST_WINDOW`] before new ones are refused. Bounds a varied-identity
+/// flood on one post without a CAPTCHA; generous enough for legitimate activity.
+#[cfg(feature = "server")]
+const POST_BURST_WINDOW: &str = "-60 seconds";
+#[cfg(feature = "server")]
+const POST_BURST_MAX: i64 = 10;
+
+/// The `CommentView` projection + its author join, shared by the public
+/// per-post list here and the admin moderation queue in `server::admin`. Each
+/// caller appends its own `WHERE`/`ORDER BY`. Centralized so the COALESCE
+/// display-name fallback stays identical everywhere a `CommentView` is read.
+#[cfg(feature = "server")]
+pub(crate) const COMMENT_VIEW_COLUMNS: &str = "cm.id, cm.post_id, \
+     COALESCE(u.display_name, u.username, cm.guest_name, 'Anonymous') AS display_name, \
+     cm.body, cm.status, cm.created_at";
+#[cfg(feature = "server")]
+pub(crate) const COMMENT_VIEW_FROM: &str =
+    "FROM comments cm LEFT JOIN users u ON u.id = cm.author_id";
+
 /// The most recent approved comments across all published posts — backs the
 /// home "Recent comments" sidebar. Public.
 #[post("/api/comments/recent", db: DbExtension)]
@@ -45,17 +69,11 @@ pub async fn recent_comments(limit: i64) -> Result<Vec<RecentComment>> {
 /// Approved comments for a post, oldest first (public view).
 #[post("/api/comments", db: DbExtension)]
 pub async fn list_comments(post_id: i64) -> Result<Vec<CommentView>> {
-    let rows = sqlx::query_as::<_, CommentView>(
-        r#"
-        SELECT cm.id, cm.post_id,
-               COALESCE(u.display_name, u.username, cm.guest_name, 'Anonymous') AS display_name,
-               cm.body, cm.status, cm.created_at
-        FROM comments cm
-        LEFT JOIN users u ON u.id = cm.author_id
-        WHERE cm.post_id = ? AND cm.status = 'approved'
-        ORDER BY cm.created_at ASC
-        "#,
-    )
+    let rows = sqlx::query_as::<_, CommentView>(&format!(
+        "SELECT {COMMENT_VIEW_COLUMNS} {COMMENT_VIEW_FROM} \
+         WHERE cm.post_id = ? AND cm.status = 'approved' \
+         ORDER BY cm.created_at ASC"
+    ))
     .bind(post_id)
     .fetch_all(&db.0)
     .await
@@ -120,6 +138,54 @@ pub async fn create_comment(
             (None, Some(name), Some(email))
         }
     };
+
+    // Anti-flood throttle for the public comment form. The global per-IP limiter
+    // (main.rs) is the outer guard; these two gates are per-post so they survive
+    // behind a shared proxy IP: a short cooldown per commenter identity, plus a
+    // burst cap on how fast one post can accrue comments from any identities.
+    let recent_by_identity: Option<i64> = match (author_id, gemail.as_deref()) {
+        (Some(uid), _) => sqlx::query_scalar(
+            "SELECT 1 FROM comments WHERE post_id = ? AND author_id = ? \
+             AND created_at >= datetime('now', ?) LIMIT 1",
+        )
+        .bind(post_id)
+        .bind(uid)
+        .bind(COMMENT_COOLDOWN)
+        .fetch_optional(&db.0)
+        .await
+        .map_err(sfe)?,
+        (None, Some(email)) => sqlx::query_scalar(
+            "SELECT 1 FROM comments WHERE post_id = ? AND guest_email = ? \
+             AND created_at >= datetime('now', ?) LIMIT 1",
+        )
+        .bind(post_id)
+        .bind(email)
+        .bind(COMMENT_COOLDOWN)
+        .fetch_optional(&db.0)
+        .await
+        .map_err(sfe)?,
+        _ => None,
+    };
+    if recent_by_identity.is_some() {
+        return Err(
+            ServerFnError::new("You're commenting too quickly — please wait a moment.").into(),
+        );
+    }
+
+    let burst: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM comments WHERE post_id = ? AND created_at >= datetime('now', ?)",
+    )
+    .bind(post_id)
+    .bind(POST_BURST_WINDOW)
+    .fetch_one(&db.0)
+    .await
+    .map_err(sfe)?;
+    if burst >= POST_BURST_MAX {
+        return Err(ServerFnError::new(
+            "This post is receiving too many comments right now — please try again shortly.",
+        )
+        .into());
+    }
 
     // Auto-approve a returning logged-in commenter.
     let status = if let Some(uid) = author_id {

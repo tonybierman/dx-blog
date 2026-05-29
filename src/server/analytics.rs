@@ -16,7 +16,12 @@ use crate::server::{require_perm, sfe, DbExtension, POST_CARD_COLUMNS, POST_CARD
 #[cfg(feature = "server")]
 fn visitor_hash(headers: &axum::http::HeaderMap) -> String {
     use std::hash::{Hash, Hasher};
-    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+    };
     // Behind a proxy the real client is the first X-Forwarded-For hop; otherwise
     // try X-Real-IP. User-agent is the last resort so direct hits still vary.
     let ip = {
@@ -52,6 +57,13 @@ fn visitor_hash(headers: &axum::http::HeaderMap) -> String {
 #[post("/api/view", db: DbExtension, headers: axum::http::HeaderMap)]
 pub async fn record_view(post_id: i64, referrer: Option<String>) -> Result<()> {
     let visitor = visitor_hash(&headers);
+    // Cap the stored referrer: it's attacker-controlled (client-sent), shown
+    // verbatim to admins, and never otherwise trusted — so bound its length to
+    // keep a crafted value from bloating the table. Empty → NULL ("(direct)").
+    const MAX_REFERRER_LEN: usize = 512;
+    let referrer = referrer
+        .map(|r| r.trim().chars().take(MAX_REFERRER_LEN).collect::<String>())
+        .filter(|r| !r.is_empty());
     sqlx::query(
         "INSERT INTO post_views (post_id, referrer, visitor_hash)
          SELECT ?, ?, ?

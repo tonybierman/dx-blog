@@ -105,6 +105,25 @@ wire_struct! {
     }
 }
 
+/// One message on a post's live (SSE) channel. The server serializes these onto
+/// the stream; the wasm client (`crate::live`) parses them back. Not a
+/// `wire_struct!` — it never touches sqlx, and the tagged enum is the natural
+/// shape. Each variant is also sent under a matching SSE *event name*
+/// (`presence`/`comment`/`reaction`); the `#[serde(tag = "type")]` envelope makes
+/// the JSON self-describing so the client has a single parse path.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum LiveEvent {
+    /// Distinct readers currently connected to this post.
+    Presence { count: i64 },
+    /// A newly-visible (approved) comment, to append without a refetch.
+    Comment(CommentView),
+    /// A clap/reaction to animate in, plus the post's authoritative running
+    /// total after it (so every client converges on the same count rather than
+    /// each tracking its own increments).
+    Reaction { kind: String, total: i64 },
+}
+
 wire_struct! {
     pub struct AuthorProfile {
         pub user_id: i64,

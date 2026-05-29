@@ -16,6 +16,10 @@ dioxus-web = { version = "0.7.9", features = ["hydrate"], optional = true }
 # Timing hooks (use_debounce) — backs the editor's debounced live preview.
 dioxus-sdk-time = "0.7"
 
+# (De)serialization for the SSE live-event payloads. Needed on BOTH targets: the
+# server serializes `LiveEvent`s onto the stream, the wasm client parses them.
+serde_json = "1"
+
 # Auth/authz engine + Dioxus adapter, from the arium workspace on GitHub.
 # `default-features = false` so we pick capabilities explicitly. `sql-membership`
 # brings `SqlMembershipStore` + `membership_migrator` for per-post ownership.
@@ -50,9 +54,38 @@ ammonia = { version = "4", optional = true }                                # HT
 slug = { version = "0.1", optional = true }                                 # slug generation
 base64 = { version = "0.22", optional = true }                             # media upload decode
 
+# Live-reading SSE: in-memory broadcast hub + the axum SSE stream. `tokio`'s
+# `sync` feature gives `broadcast`; `tokio-stream`'s `sync` feature gives the
+# `BroadcastStream` adapter that turns a receiver into the `Stream` axum's `Sse`
+# wants; `futures` provides the `Stream` trait/combinators for the wrapper.
+tokio = { version = "1", default-features = false, optional = true, features = ["sync"] }
+tokio-stream = { version = "0.1", default-features = false, optional = true, features = ["sync"] }
+# Stream trait + combinators: the SSE wrapper on the server, and the EventSource
+# consumer (`StreamExt::next`, `stream::select`) on the wasm client — so it's
+# enabled by both `server` and `web`.
+futures = { version = "0.3", optional = true }
+
+# Live-reading client: the browser EventSource that consumes the SSE stream.
+# WASM-only (gated by `web`). The `eventsource` feature exposes the Stream-based
+# `eventsource::futures::EventSource` the use_future consumer drains, and pulls
+# `web-sys/MessageEvent` itself — so no separate web-sys dep is needed.
+gloo-net = { version = "0.6", default-features = false, optional = true, features = ["eventsource"] }
+# Consume the EventSource subscription streams via `StreamExt`/`stream::select`.
+# Depended on directly (the same crate gloo-net links) so its `Stream` trait is
+# the *same* one gloo-net's subscription implements — going through the `futures`
+# facade resolves `Stream` to a different path and the bound fails to match.
+futures-util = { version = "0.3", default-features = false, optional = true }
+
 [features]
 default = ["web", "server", "sqlite"]
-web = ["dioxus/web", "dep:dioxus-web", "dep:pulldown-cmark", "dep:ammonia"]
+web = [
+    "dioxus/web",
+    "dep:dioxus-web",
+    "dep:pulldown-cmark",
+    "dep:ammonia",
+    "dep:gloo-net",
+    "dep:futures-util",
+]
 server = [
     "dioxus/server",
     "dep:axum",
@@ -63,6 +96,9 @@ server = [
     "dep:ammonia",
     "dep:slug",
     "dep:base64",
+    "dep:tokio",
+    "dep:tokio-stream",
+    "dep:futures",
     "arium-dioxus/server",
 ]
 

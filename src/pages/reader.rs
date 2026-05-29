@@ -5,12 +5,16 @@ use dioxus::prelude::*;
 
 use arium_dioxus::ui::{use_permissions, ResourceGate};
 use arium_dioxus::ResourceRole;
+use dioxus_sdk_time::use_interval;
 
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
+use crate::live::{use_live, LiveHandle};
+use crate::model::CommentView;
 use crate::pages::widgets::{CategoryList, FeedSection, FeedShape, TagList};
 use crate::server::authors::get_author_profile;
 use crate::server::comments::{create_comment, list_comments};
 use crate::server::posts::{get_post, list_archive, list_posts, posts_by_author};
+use crate::server::reactions::{add_reaction, reaction_total};
 use crate::server::search::search_posts;
 use crate::server::subscribers::{confirm_subscription, subscribe};
 use crate::server::taxonomy::{get_category, get_tag};
@@ -143,6 +147,10 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
         });
     });
 
+    // Open the live channel for this post once; share the handle with the
+    // presence badge, the reaction bar, and the comment section below.
+    let live = use_live(post_id);
+
     let is_draft = post.status != crate::model::STATUS_PUBLISHED;
 
     rsx! {
@@ -167,7 +175,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                     }
                 }
             }
-            div { class: "mt-2 flex gap-2 text-sm text-white/50",
+            div { class: "mt-2 flex flex-wrap items-center gap-2 text-sm text-white/50",
                 Link {
                     to: Route::AuthorProfile { slug: post.author_username.clone() },
                     class: "hover:underline",
@@ -176,6 +184,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                 if let Some(when) = post.published_at.clone() {
                     span { "· {when}" }
                 }
+                PresenceBadge { live }
             }
             // "Rust MDX": split the body into rendered-markdown runs and live
             // embed blocks, mounting each embed as a real interactive component
@@ -201,15 +210,97 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                 }
             }
         }
-        CommentSection { post_id }
+        ReactionBar { post_id, live }
+        CommentSection { post_id, live }
+    }
+}
+
+/// "N reading now" — the live presence count for this post. Count is 0 during
+/// SSR and until the client's EventSource connects, so it's hidden then; once
+/// connected it shows at least "1 reading now" (you). Note readers are deduped
+/// by a coarse IP+User-Agent fingerprint, so multiple tabs/windows of the same
+/// browser on one machine count as a single reader — a second browser shows 2.
+#[component]
+fn PresenceBadge(live: LiveHandle) -> Element {
+    let n = (live.reading_now)();
+    rsx! {
+        if n >= 1 {
+            span { class: "inline-flex items-center gap-1 rounded-full bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-300",
+                span { class: "h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" }
+                "{n} reading now"
+            }
+        }
+    }
+}
+
+/// A clap button plus the floating-clap overlay. Clapping is anonymous and
+/// optimistic: each click animates a burst locally right away and fires
+/// `add_reaction`; every reader (including this one, via the SSE echo) gets the
+/// broadcast burst too. The count is the server's authoritative total: it seeds
+/// from `reaction_total` on load and each reaction event carries the new total,
+/// so every window converges on the same number.
+#[component]
+fn ReactionBar(post_id: i64, live: LiveHandle) -> Element {
+    let mut claps = live.claps;
+    let total = use_resource(move || async move { reaction_total(post_id).await });
+    let mut local_clap_id = use_signal(|| 1_000_000_000u64);
+
+    // Prune finished animations (~1.4s keyframe) so the overlay vec stays small.
+    use_interval(std::time::Duration::from_millis(1500), move |()| {
+        if !claps().is_empty() {
+            claps.set(Vec::new());
+        }
+    });
+
+    // The initial fetch and the live total reflect the same DB count; the live
+    // total (once any event has arrived) is always >= the fetch, so max() shows
+    // the right number in any arrival order.
+    let base = match &*total.read() {
+        Some(Ok(n)) => *n,
+        _ => 0,
+    };
+    let display = base.max((live.reaction_count)());
+
+    let clap = move |_| {
+        // Optimistic local burst for instant feedback; the server echo adds the
+        // shared one. Use a high id range so it can't collide with server bursts.
+        let id = local_clap_id();
+        local_clap_id += 1;
+        claps.with_mut(|v| {
+            v.push(crate::live::ClapBurst {
+                id,
+                kind: "clap".into(),
+            })
+        });
+        spawn(async move {
+            let _ = add_reaction(post_id, "clap".to_string()).await;
+        });
+    };
+
+    rsx! {
+        div { class: "relative mt-10 flex items-center gap-3",
+            button {
+                class: "inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-1.5 text-sm hover:bg-white/5 active:scale-95",
+                onclick: clap,
+                span { "👏" }
+                "Clap"
+            }
+            span { class: "text-sm text-white/50", "{display}" }
+            // Floating bursts rise out of the button row.
+            div { class: "pointer-events-none absolute bottom-0 left-3",
+                for burst in claps() {
+                    span { key: "{burst.id}", class: "clap-float", "👏" }
+                }
+            }
+        }
     }
 }
 
 #[component]
-fn CommentSection(post_id: i64) -> Element {
+fn CommentSection(post_id: i64, live: LiveHandle) -> Element {
     let perms = use_permissions();
     let logged_in = perms.is_authenticated();
-    let mut comments = use_resource(move || async move { list_comments(post_id).await });
+    let comments = use_resource(move || async move { list_comments(post_id).await });
 
     let mut body = use_signal(String::new);
     let mut name = use_signal(String::new);
@@ -217,50 +308,142 @@ fn CommentSection(post_id: i64) -> Element {
     let mut status = use_signal(String::new);
     // Guards against a double-submit while the request is in flight.
     let mut submitting = use_signal(|| false);
+    // Locally-held comments: optimistic placeholders (negative ids) while a post
+    // is in flight, and our own pending comments (real ids) that won't arrive
+    // over SSE because only approved comments are broadcast.
+    let mut optimistic = use_signal(Vec::<CommentView>::new);
+    let mut next_temp_id = use_signal(|| -1i64);
+
+    let mut live_comments = live.live_comments;
 
     let submit = move |_| {
         if submitting() {
             return;
         }
-        let b = body();
+        let b = body().trim().to_string();
+        if b.is_empty() {
+            status.set("Comment cannot be empty.".into());
+            return;
+        }
         let (n, e) = (name(), email());
         submitting.set(true);
+
+        // Drop an optimistic placeholder in immediately so the comment appears
+        // the instant you hit post; reconcile against the server's return value.
+        let temp_id = next_temp_id();
+        next_temp_id -= 1;
+        let display = if n.trim().is_empty() {
+            "You".to_string()
+        } else {
+            n.trim().to_string()
+        };
+        optimistic.with_mut(|v| {
+            v.push(CommentView {
+                id: temp_id,
+                post_id,
+                display_name: display,
+                body: b.clone(),
+                status: "sending".to_string(),
+                created_at: "just now".to_string(),
+            })
+        });
+
         spawn(async move {
             let gname = if n.is_empty() { None } else { Some(n) };
             let gemail = if e.is_empty() { None } else { Some(e) };
             match create_comment(post_id, b, gname, gemail).await {
-                Ok(()) => {
+                Ok(view) => {
                     // Clear the whole form, not just the body, so a guest doesn't
                     // resubmit their name/email by accident.
                     body.set(String::new());
                     name.set(String::new());
                     email.set(String::new());
-                    status.set("Thanks! Your comment is awaiting approval.".into());
-                    comments.restart();
+                    // Replace the placeholder with the server's canonical row.
+                    if view.status == "approved" {
+                        // Approved: it also streams in via SSE — add it deduped so
+                        // it shows even if the echo is slow, then drop the temp.
+                        optimistic.with_mut(|v| v.retain(|c| c.id != temp_id));
+                        live_comments.with_mut(|v| {
+                            if !v.iter().any(|c| c.id == view.id) {
+                                v.push(view.clone());
+                            }
+                        });
+                        status.set("Thanks! Your comment is posted.".into());
+                    } else {
+                        // Pending: never broadcast, so keep showing it locally,
+                        // marked awaiting approval (swap temp → real row).
+                        optimistic.with_mut(|v| {
+                            for c in v.iter_mut() {
+                                if c.id == temp_id {
+                                    *c = view.clone();
+                                }
+                            }
+                        });
+                        status.set("Thanks! Your comment is awaiting approval.".into());
+                    }
                 }
-                Err(err) => status.set(arium_dioxus::friendly_server_error(err)),
+                Err(err) => {
+                    optimistic.with_mut(|v| v.retain(|c| c.id != temp_id));
+                    status.set(arium_dioxus::friendly_server_error(err));
+                }
             }
             submitting.set(false);
         });
     };
 
+    // Merge the three sources into one list, deduped by id and preserving order:
+    // initial approved set (oldest first), then SSE-streamed approved comments,
+    // then our local optimistic/pending rows.
+    let merged: Vec<CommentView> = {
+        let mut out: Vec<CommentView> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        if let Some(Ok(list)) = &*comments.read() {
+            for c in list {
+                if seen.insert(c.id) {
+                    out.push(c.clone());
+                }
+            }
+        }
+        for c in live_comments() {
+            if c.post_id == post_id && seen.insert(c.id) {
+                out.push(c);
+            }
+        }
+        for c in optimistic() {
+            if seen.insert(c.id) {
+                out.push(c);
+            }
+        }
+        out
+    };
+    let loading = comments.read().is_none();
+    let load_error = matches!(&*comments.read(), Some(Err(_)));
+
     rsx! {
         section { class: "mt-12 border-t border-white/10 pt-8",
             h2 { class: "text-xl font-semibold", "Comments" }
             div { class: "mt-4 space-y-4",
-                match &*comments.read() {
-                    Some(Ok(list)) if !list.is_empty() => rsx! {
-                        for c in list.clone() {
-                            div { key: "{c.id}", class: "rounded-lg border border-white/10 p-3",
+                if !merged.is_empty() {
+                    for c in merged {
+                        div { key: "{c.id}", class: "rounded-lg border border-white/10 p-3",
+                            div { class: "flex items-center gap-2",
                                 div { class: "text-sm font-medium", "{c.display_name}" }
-                                div { class: "text-xs text-white/40", "{c.created_at}" }
-                                p { class: "mt-1 text-sm text-white/80", "{c.body}" }
+                                if c.status == "sending" {
+                                    span { class: "text-xs text-white/40 italic", "posting…" }
+                                } else if c.status == "pending" {
+                                    span { class: "rounded bg-amber-400/10 px-1.5 text-xs text-amber-300", "awaiting approval" }
+                                }
                             }
+                            div { class: "text-xs text-white/40", "{c.created_at}" }
+                            p { class: "mt-1 text-sm text-white/80", "{c.body}" }
                         }
-                    },
-                    Some(Ok(_)) => rsx! { p { class: "text-sm text-white/50", "No comments yet." } },
-                    Some(Err(e)) => rsx! { p { class: "text-sm text-red-400", "{e}" } },
-                    None => rsx! { p { class: "text-sm text-white/50", "Loading…" } },
+                    }
+                } else if loading {
+                    p { class: "text-sm text-white/50", "Loading…" }
+                } else if load_error {
+                    p { class: "text-sm text-red-400", "Couldn't load comments." }
+                } else {
+                    p { class: "text-sm text-white/50", "No comments yet." }
                 }
             }
 

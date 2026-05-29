@@ -7,7 +7,7 @@ use crate::model::CommentView;
 #[cfg(feature = "server")]
 use crate::auth_tokens::COMMENTS_MODERATE;
 #[cfg(feature = "server")]
-use crate::server::{require_perm, sfe, DbExtension};
+use crate::server::{live::HubExtension, require_perm, sfe, DbExtension};
 
 /// Comments filtered by status (defaults to all) — moderation queue.
 #[post("/api/admin/comments", auth: arium_dioxus::auth::Session, db: DbExtension)]
@@ -27,7 +27,7 @@ pub async fn admin_list_comments(status: Option<String>) -> Result<Vec<CommentVi
     Ok(rows)
 }
 
-#[post("/api/admin/comments/moderate", auth: arium_dioxus::auth::Session, db: DbExtension)]
+#[post("/api/admin/comments/moderate", auth: arium_dioxus::auth::Session, db: DbExtension, hub: HubExtension)]
 pub async fn moderate_comment(id: i64, status: String) -> Result<()> {
     require_perm(&auth, COMMENTS_MODERATE)?;
     if !crate::model::COMMENT_STATUSES.contains(&status.as_str()) {
@@ -39,6 +39,21 @@ pub async fn moderate_comment(id: i64, status: String) -> Result<()> {
         .execute(&db.0)
         .await
         .map_err(sfe)?;
+
+    // Approving a comment is the moment it becomes public — push it to anyone
+    // currently reading the post so it streams in without a refresh. This is the
+    // common path for guest / first-time commenters whose comment started pending.
+    if status == "approved" {
+        use crate::server::comments::{COMMENT_VIEW_COLUMNS, COMMENT_VIEW_FROM};
+        let view = sqlx::query_as::<_, CommentView>(&format!(
+            "SELECT {COMMENT_VIEW_COLUMNS} {COMMENT_VIEW_FROM} WHERE cm.id = ?"
+        ))
+        .bind(id)
+        .fetch_one(&db.0)
+        .await
+        .map_err(sfe)?;
+        hub.publish(view.post_id, crate::model::LiveEvent::Comment(view));
+    }
     Ok(())
 }
 

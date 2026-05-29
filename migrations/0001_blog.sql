@@ -109,6 +109,22 @@ CREATE INDEX IF NOT EXISTS idx_post_views_dedup
 -- views-over-time filters by viewed_at alone across all posts.
 CREATE INDEX IF NOT EXISTS idx_post_views_viewed_at ON post_views(viewed_at);
 
+-- Anonymous reactions/claps. Like post_views, rows are append-only and keyed by
+-- the coarse visitor_hash (analytics::visitor_hash) — no account required. Each
+-- row is one clap; reactions::add_reaction caps per-visitor totals and bursts.
+CREATE TABLE IF NOT EXISTS reactions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id      INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    kind         TEXT NOT NULL DEFAULT 'clap',
+    visitor_hash TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_reactions_post ON reactions(post_id);
+-- add_reaction's per-visitor cap + burst probes filter on
+-- (post_id, visitor_hash, created_at); this composite lets them seek.
+CREATE INDEX IF NOT EXISTS idx_reactions_dedup
+    ON reactions(post_id, visitor_hash, created_at);
+
 -- Blog-specific profile fields (arium's users already has display_name/avatar_url).
 CREATE TABLE IF NOT EXISTS user_profiles (
     user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

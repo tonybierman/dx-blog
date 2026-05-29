@@ -14,7 +14,7 @@ use crate::server::{require_perm, sfe, DbExtension, POST_CARD_COLUMNS, POST_CARD
 /// used to dedup views — not stored in the clear — so a stable per-process hash
 /// (`DefaultHasher`'s fixed keys) is enough; we don't need a cryptographic one.
 #[cfg(feature = "server")]
-fn visitor_hash(headers: &axum::http::HeaderMap) -> String {
+pub(crate) fn visitor_hash(headers: &axum::http::HeaderMap) -> String {
     use std::hash::{Hash, Hasher};
     let header = |name: &str| {
         headers

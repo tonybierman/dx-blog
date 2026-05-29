@@ -1866,11 +1866,16 @@ dependencies = [
  "dioxus",
  "dioxus-sdk-time",
  "dioxus-web",
+ "futures",
+ "futures-util",
+ "gloo-net",
  "pulldown-cmark",
  "serde",
+ "serde_json",
  "slug",
  "sqlx",
  "tokio",
+ "tokio-stream",
  "tower-http",
 ]
 

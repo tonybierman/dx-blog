@@ -19,6 +19,7 @@ use arium_dioxus::ui::{OAuthProvidersProvider, PermissionsProvider};
 mod auth_tokens;
 mod embeds;
 mod layouts;
+mod live;
 mod mdx;
 mod model;
 mod pages;
@@ -229,6 +230,11 @@ fn main() {
         };
         let cfg = builder.build()?;
 
+        // The in-memory live-reading hub (presence + per-post broadcast). Shared
+        // by the SSE route and the comment/reaction server fns; layered onto the
+        // router below as an Extension, exactly like the pool install() layers.
+        let hub = server::live::LiveHub::new();
+
         // Serve uploaded media statically from ./uploads.
         std::fs::create_dir_all("uploads").ok();
         let router = dioxus::server::router(App)
@@ -239,7 +245,13 @@ fn main() {
                 "/sitemap.xml",
                 axum::routing::get(server::feeds::sitemap_handler),
             )
-            .route("/feed.xml", axum::routing::get(server::feeds::atom_handler));
+            .route("/feed.xml", axum::routing::get(server::feeds::atom_handler))
+            // Live-reading SSE stream (presence + comments + reactions) per post.
+            // A raw streaming GET, like the XML feeds above — not a server fn.
+            .route(
+                "/api/live/{post_id}",
+                axum::routing::get(server::live::live_handler),
+            );
 
         // Permanent redirects from the names people (and feed readers) commonly
         // guess to the canonical endpoints above — otherwise they fall through to
@@ -262,6 +274,12 @@ fn main() {
                     get(|| async { Redirect::permanent("/sitemap.xml") }),
                 )
         };
+
+        // Make the live hub reachable from every route added above and from the
+        // Dioxus server fns (create_comment / add_reaction / moderate_comment),
+        // which extract it via `HubExtension`. Layered before install() so it sits
+        // under arium's own middleware/extensions.
+        let router = router.layer(axum::Extension(hub));
 
         arium_dioxus::install(router, cfg).await
     });

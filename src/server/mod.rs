@@ -12,7 +12,10 @@ pub mod authors;
 pub mod comments;
 #[cfg(feature = "server")]
 pub mod feeds;
+#[cfg(feature = "server")]
+pub mod live;
 pub mod posts;
+pub mod reactions;
 pub mod search;
 pub mod settings;
 pub mod subscribers;

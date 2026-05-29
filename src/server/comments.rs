@@ -21,11 +21,13 @@ const MAX_EMAIL_LEN: usize = 254;
 /// post to the same post more than once within this window.
 #[cfg(feature = "server")]
 const COMMENT_COOLDOWN: &str = "-30 seconds";
-/// Burst cap: how many comments a single post may accrue inside
-/// [`POST_BURST_WINDOW`] before new ones are refused. Bounds a varied-identity
-/// flood on one post without a CAPTCHA; generous enough for legitimate activity.
+/// Burst window: the trailing span over which a single post's comments are
+/// counted toward [`POST_BURST_MAX`]. Bounds a varied-identity flood on one post
+/// without a CAPTCHA; generous enough for legitimate activity.
 #[cfg(feature = "server")]
 const POST_BURST_WINDOW: &str = "-60 seconds";
+/// Max comments any one post may accrue within [`POST_BURST_WINDOW`] before
+/// further comments are refused.
 #[cfg(feature = "server")]
 const POST_BURST_MAX: i64 = 10;
 

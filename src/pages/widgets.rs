@@ -298,7 +298,8 @@ pub fn FeedSkeleton(#[props(default = 4)] count: usize) -> Element {
     }
 }
 
-/// Renders the loading / error / empty / list states for a post feed body.
+/// Renders the empty and populated states for a post feed body (loading and
+/// error states are handled upstream by the `feed_states!` macro).
 #[component]
 pub fn FeedGrid(cards: Vec<PostCard>) -> Element {
     if cards.is_empty() {

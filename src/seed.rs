@@ -1,5 +1,5 @@
-//! Idempotent demo-data seeding. Runs automatically at startup when the `posts`
-//! table is empty. Creates the fixtures listed in PLAN.md.
+//! Idempotent demo-data seeding. Runs at startup only when `DX_SEED=1` is set
+//! and the `posts` table is empty.
 
 #![cfg(feature = "server")]
 
@@ -22,7 +22,7 @@ async fn grant_token(pool: &Pool, user_id: i64, token: &str) -> anyhow::Result<(
     Ok(())
 }
 
-/// Create demo users/content if the blog is empty. Safe to call on every boot.
+/// Create demo users/content if the blog is empty; a no-op otherwise.
 pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
     let posts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM posts")
         .fetch_one(pool)

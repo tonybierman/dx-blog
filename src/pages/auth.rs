@@ -1,5 +1,6 @@
-//! Auth pages — thin wrappers over arium's drop-in UI, placed in FullBleedLayout
-//! per the PLAN's /login, /register, /forgot-password, /auth/reset, /auth/verify.
+//! Auth pages — thin wrappers over arium's drop-in UI: /login, /register,
+//! /forgot-password, /auth/reset, /auth/verify (FullBleedLayout), plus /account
+//! (HolyGrailLayout).
 //!
 //! `LoginPanel` carries its own sign-in / sign-up toggle, so /login and /register
 //! render the same panel; the route split is for clean URLs and deep links.

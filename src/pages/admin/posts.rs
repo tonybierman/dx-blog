@@ -7,8 +7,7 @@ use std::time::Duration;
 use crate::model::{PostEditData, POST_STATUSES, STATUS_DRAFT};
 use crate::pages::widgets::list_states;
 use crate::server::admin::{
-    admin_list_posts, create_post, delete_post, get_post_edit, list_media, preview_markdown,
-    update_post,
+    admin_list_posts, create_post, delete_post, get_post_edit, list_media, update_post,
 };
 use crate::server::taxonomy::{list_categories, list_tags};
 use crate::Route;
@@ -166,17 +165,12 @@ fn EditorForm(initial: PostEditData) -> Element {
     let media = use_resource(list_media);
     let mut show_media_picker = use_signal(|| false);
 
-    // Live preview is debounced: the textarea updates `body` on every keystroke
-    // (instant local echo), but the server round-trip keys off `preview_md`,
-    // which only catches up 400ms after the user stops typing.
-    let mut preview_md = use_signal(|| initial.body_md.clone());
-    let mut debounce_preview = use_debounce(Duration::from_millis(400), move |md: String| {
-        preview_md.set(md);
-    });
-    let preview = use_resource(move || {
-        let md = preview_md();
-        async move { preview_markdown(md).await }
-    });
+    // Live preview renders in the browser (WASM): `render_markdown` is the same
+    // pulldown-cmark + ammonia pipeline the server uses to produce stored
+    // `body_html`, so the preview is byte-for-byte what gets saved. Running it
+    // locally means zero-latency, offline-capable preview with no server load —
+    // so no debounce is needed; `use_memo` recomputes synchronously per keystroke.
+    let preview_html = use_memo(move || crate::server::render_markdown(&body()));
 
     let post_id = initial.id;
     let submit = move |_| {
@@ -313,11 +307,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                     class: "h-80 w-full rounded border border-white/15 bg-transparent px-3 py-2 font-mono text-sm",
                     placeholder: "Write in Markdown…",
                     value: "{body}",
-                    oninput: move |e| {
-                        let v = e.value();
-                        body.set(v.clone());
-                        debounce_preview.action(v);
-                    },
+                    oninput: move |e| body.set(e.value()),
                 }
                 div { class: "flex items-center gap-3",
                     button {
@@ -334,10 +324,7 @@ fn EditorForm(initial: PostEditData) -> Element {
             div {
                 h3 { class: "mb-2 text-sm uppercase tracking-wide text-white/40", "Preview" }
                 div { class: "prose max-w-none rounded border border-white/10 p-4",
-                    match &*preview.read() {
-                        Some(Ok(html)) => rsx! { div { dangerous_inner_html: "{html}" } },
-                        _ => rsx! { p { class: "text-white/40", "…" } },
-                    }
+                    div { dangerous_inner_html: "{preview_html}" }
                 }
             }
         }

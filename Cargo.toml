@@ -52,7 +52,7 @@ base64 = { version = "0.22", optional = true }                             # med
 
 [features]
 default = ["web", "server", "sqlite"]
-web = ["dioxus/web", "dep:dioxus-web"]
+web = ["dioxus/web", "dep:dioxus-web", "dep:pulldown-cmark", "dep:ammonia"]
 server = [
     "dioxus/server",
     "dep:axum",

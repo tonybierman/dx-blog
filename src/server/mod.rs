@@ -79,7 +79,11 @@ pub fn looks_like_email(email: &str) -> bool {
 }
 
 /// Render Markdown source to sanitized HTML for storage/display.
-#[cfg(feature = "server")]
+///
+/// Compiled for both the server (post storage, feeds, seed) and the wasm client
+/// (the editor's in-browser live preview), so the preview a writer sees is the
+/// byte-for-byte same pipeline that produces the stored `body_html`.
+#[cfg(any(feature = "server", feature = "web"))]
 pub fn render_markdown(md: &str) -> String {
     use pulldown_cmark::{html, Options, Parser};
 

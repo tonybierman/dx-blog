@@ -342,7 +342,10 @@ pub fn TagFeed(slug: String) -> Element {
 
     rsx! {
         BentoGridLayout {
-            left: rsx! { h1 { class: "text-2xl font-bold", "#{title}" } },
+            left: rsx! {
+                h1 { class: "text-2xl font-bold", "#{title}" }
+                TagList {}
+            },
             match &*posts.read() {
                 Some(Ok(feed)) => {
                     let total_pages = feed.total_pages();

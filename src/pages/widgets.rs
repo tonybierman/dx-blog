@@ -39,21 +39,27 @@ pub fn CategoryList() -> Element {
     }
 }
 
-/// Sidebar listing tags as links to their feeds.
+/// Sidebar listing tags as a wrap of pill chips that link to their feeds.
 #[component]
 pub fn TagList() -> Element {
     let tags = use_resource(list_tags);
+    // Highlight the tag whose feed is currently open, in the site accent.
+    let active_slug = match use_route::<Route>() {
+        Route::TagFeed { slug } => Some(slug),
+        _ => None,
+    };
     rsx! {
         div { class: "mt-6 text-sm",
-            h3 { class: "mb-2 font-semibold text-white/80", "Tags" }
+            h3 { class: "mb-3 font-semibold text-white/80", "Tags" }
             match &*tags.read() {
                 Some(Ok(list)) if !list.is_empty() => rsx! {
                     div { class: "flex flex-wrap gap-2",
                         for t in list.clone() {
-                            Link {
-                                to: Route::TagFeed { slug: t.slug.clone() },
-                                class: "rounded-full border border-white/15 px-2 py-0.5 text-xs text-white/60 hover:text-white",
-                                "#{t.name}"
+                            TagPill {
+                                key: "{t.slug}",
+                                name: t.name.clone(),
+                                slug: t.slug.clone(),
+                                active: active_slug.as_deref() == Some(t.slug.as_str()),
                             }
                         }
                     }
@@ -63,6 +69,22 @@ pub fn TagList() -> Element {
                 None => rsx! { p { class: "text-white/40", "…" } },
             }
         }
+    }
+}
+
+/// A single rounded tag chip. The active tag (the feed currently being viewed)
+/// is filled with the site accent — the `brand-*` palette driven by the
+/// user-set `--brand-hue`; the rest are subtle and pick up an accent tint on
+/// hover.
+#[component]
+fn TagPill(name: String, slug: String, active: bool) -> Element {
+    let class = if active {
+        "rounded-full border border-brand-500 bg-brand-500 px-3.5 py-1.5 font-medium text-white shadow-sm shadow-brand-500/30"
+    } else {
+        "rounded-full border border-white/10 bg-white/[0.06] px-3.5 py-1.5 text-white/70 transition-colors hover:border-brand-400/40 hover:bg-white/10 hover:text-white"
+    };
+    rsx! {
+        Link { to: Route::TagFeed { slug }, class, "{name}" }
     }
 }
 

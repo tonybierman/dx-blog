@@ -311,11 +311,3 @@ async fn set_post_tags(
     }
     Ok(())
 }
-
-/// Render Markdown to sanitized HTML for the editor's live preview.
-#[post("/api/admin/preview", auth: arium_dioxus::auth::Session, db: DbExtension)]
-pub async fn preview_markdown(md: String) -> Result<String> {
-    require_perm(&auth, POSTS_WRITE)?;
-    let _ = &db; // pool unused; extractor kept for a uniform signature
-    Ok(render_markdown(&md))
-}

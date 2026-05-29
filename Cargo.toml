@@ -43,7 +43,6 @@ sqlx = { version = "0.8.6", default-features = false, optional = true, features 
     "migrate",
     "runtime-tokio",
 ] }
-async-trait = { version = "0.1.88", optional = true }
 anyhow = { version = "1.0.98", optional = true }
 tower-http = { version = "0.6", optional = true, features = ["fs"] }        # static /uploads
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"], optional = true }  # markdown render
@@ -58,7 +57,6 @@ server = [
     "dioxus/server",
     "dep:axum",
     "dep:sqlx",
-    "dep:async-trait",
     "dep:anyhow",
     "dep:tower-http",
     "dep:pulldown-cmark",

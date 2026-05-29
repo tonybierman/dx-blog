@@ -1861,7 +1861,6 @@ dependencies = [
  "ammonia",
  "anyhow",
  "arium-dioxus",
- "async-trait",
  "axum",
  "base64",
  "dioxus",

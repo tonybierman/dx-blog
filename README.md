@@ -11,12 +11,14 @@ Server-rendered and hydrated, SQLite-backed, styled with Tailwind v4.
 - Full-text search with category / tag / date facets
 - Per-post pages with comments, author bios, and related metadata
 - Loading skeletons and empty states; responsive layouts (holy-grail, bento, masonry, full-bleed)
+- Admin-selectable home-page layout — 12 structural kinds (holy-grail, bento, masonry, editorial, hero, and more)
 
 **Authoring & admin**
 - Markdown editor with debounced live preview; HTML is rendered and sanitized server-side
 - Draft / published / archived workflow, with author-facing draft preview
 - Media library with a featured-image picker
-- Admin dashboard: sortable/filterable post table, comment moderation, users, settings
+- Admin dashboard: sortable/filterable post table, comment moderation, users
+- Settings split into Settings (site title + tagline), Appearance (theme + home layout), and Taxonomy (categories + tags)
 - Analytics: view counts, 30-day views-over-time, and top referrers
 - One-knob theming — the whole accent palette is driven by a single brand hue
 

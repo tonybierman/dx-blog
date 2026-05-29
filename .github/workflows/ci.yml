@@ -103,7 +103,10 @@ jobs:
           shared-key: tools
       - run: cargo install --locked cargo-audit
       # RustSec advisory scan against Cargo.lock.
-      - run: cargo audit
+      # RUSTSEC-2023-0071 (rsa Marvin Attack) is ignored: `rsa` is an unused
+      # transitive entry via sqlx-mysql, which this SQLite-only project never
+      # compiles (cargo tree -i rsa is empty), and the advisory has no fix.
+      - run: cargo audit --ignore RUSTSEC-2023-0071
 
   unused-deps:
     name: cargo machete

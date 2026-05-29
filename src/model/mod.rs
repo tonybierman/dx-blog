@@ -251,9 +251,7 @@ impl HomeLayout {
 
     /// Parse a stored key back into a layout; `None` for unknown keys.
     pub fn from_key(key: &str) -> Option<HomeLayout> {
-        HomeLayout::ALL
-            .into_iter()
-            .find(|l| l.as_key() == key)
+        HomeLayout::ALL.into_iter().find(|l| l.as_key() == key)
     }
 
     /// Human label for the admin selector.

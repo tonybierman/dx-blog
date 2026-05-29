@@ -12,6 +12,7 @@ pub mod authors;
 pub mod comments;
 pub mod posts;
 pub mod search;
+pub mod settings;
 pub mod subscribers;
 pub mod taxonomy;
 

@@ -94,6 +94,12 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     social_links TEXT  -- JSON
 );
 
+-- Site-wide key/value settings (e.g. `theme_hue` for the Tailwind brand accent).
+CREATE TABLE IF NOT EXISTS site_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- Full-text search over title + body, kept in sync from `posts` via triggers.
 CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
     title,

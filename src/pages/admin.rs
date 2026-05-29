@@ -14,6 +14,7 @@ use crate::auth_tokens::{
 use crate::model::{AnalyticsSummary, PostEditData};
 use crate::server::admin::*;
 use crate::server::analytics::{analytics_summary, top_posts, top_referrers, views_over_time};
+use crate::server::settings::{get_theme_hue, set_theme_hue, DEFAULT_THEME_HUE};
 use crate::server::taxonomy::{list_categories, list_tags};
 use crate::Route;
 
@@ -688,6 +689,115 @@ pub fn AdminUsers() -> Element {
     }
 }
 
+// ---------------------------------------------------------------- settings (theme)
+
+/// Live preview: set the hue signal and override the CSS var on `<html>` so the
+/// whole page recolors immediately, independent of any save round-trip. A free
+/// fn (not a closure) so it can be reused across several event handlers — the
+/// `Signal` is `Copy`, so passing it by value still writes the shared state.
+fn preview_hue(mut hue: Signal<i64>, h: i64) {
+    hue.set(h);
+    let _ = document::eval(&format!(
+        "document.documentElement.style.setProperty('--brand-hue', '{h}')"
+    ));
+}
+
+/// Accent-hue picker. Drives the Tailwind `--brand-hue` knob: presets + a
+/// 0–360 slider, applied live on the document for instant preview and persisted
+/// site-wide via `set_theme_hue`. Swatches are rendered with raw oklch so the
+/// admin sees the actual accent at each hue.
+#[component]
+fn ThemeSelector() -> Element {
+    let saved = use_resource(get_theme_hue);
+    let mut hue = use_signal(|| DEFAULT_THEME_HUE);
+    let mut msg = use_signal(String::new);
+
+    // Sync the control to the stored hue once it loads.
+    use_effect(move || {
+        if let Some(Ok(h)) = &*saved.read() {
+            hue.set(*h);
+        }
+    });
+
+    let presets = [
+        ("Sky", 235),
+        ("Indigo", 265),
+        ("Violet", 295),
+        ("Pink", 330),
+        ("Crimson", 15),
+        ("Orange", 55),
+        ("Emerald", 155),
+        ("Teal", 195),
+    ];
+
+    rsx! {
+        section { class: "mb-8 max-w-xl",
+            h2 { class: "mb-1 text-lg font-semibold", "Theme" }
+            p { class: "mb-3 text-sm text-white/50",
+                "Pick the site accent. Changes preview instantly and save site-wide."
+            }
+            div { class: "flex flex-wrap gap-2",
+                for (name, h) in presets {
+                    button {
+                        key: "{name}",
+                        r#type: "button",
+                        class: if hue() == h {
+                            "flex items-center gap-1.5 rounded-full border border-white/50 px-3 py-1 text-xs"
+                        } else {
+                            "flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1 text-xs hover:border-white/40"
+                        },
+                        onclick: move |_| {
+                            preview_hue(hue, h);
+                            spawn(async move {
+                                match set_theme_hue(h).await {
+                                    Ok(()) => msg.set("Saved.".into()),
+                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
+                                }
+                            });
+                        },
+                        span {
+                            class: "inline-block h-3 w-3 rounded-full",
+                            style: "background: oklch(68.5% 0.165 {h})",
+                        }
+                        "{name}"
+                    }
+                }
+            }
+            div { class: "mt-4 flex items-center gap-3",
+                input {
+                    r#type: "range",
+                    min: "0",
+                    max: "360",
+                    value: "{hue}",
+                    class: "w-64 accent-brand-500",
+                    // Drag = live preview only (no save spam)…
+                    oninput: move |e| { if let Ok(h) = e.value().parse::<i64>() { preview_hue(hue, h); } },
+                    // …release = persist.
+                    onchange: move |e| {
+                        if let Ok(h) = e.value().parse::<i64>() {
+                            preview_hue(hue, h);
+                            spawn(async move {
+                                match set_theme_hue(h).await {
+                                    Ok(()) => msg.set("Saved.".into()),
+                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
+                                }
+                            });
+                        }
+                    },
+                }
+                span { class: "w-14 tabular-nums text-sm text-white/60", "{hue()}°" }
+                span {
+                    class: "inline-block h-7 w-7 rounded-full border border-white/20",
+                    style: "background: oklch(58.8% 0.155 {hue})",
+                }
+                if !msg().is_empty() {
+                    span { class: "text-xs text-white/50", "{msg}" }
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------- settings (taxonomy)
 
 #[component]
@@ -720,6 +830,7 @@ pub fn AdminSettings() -> Element {
     rsx! {
         AdminShell { active: "settings".to_string(),
             h1 { class: "mb-6 text-2xl font-bold", "Site settings" }
+            ThemeSelector {}
             div { class: "grid gap-8 md:grid-cols-2",
                 section {
                     h2 { class: "mb-3 text-lg font-semibold", "Categories" }

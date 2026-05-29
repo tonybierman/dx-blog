@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 use crate::model::{CommentView, RecentComment};
 
 #[cfg(feature = "server")]
-use crate::server::{looks_like_email, sfe, DbExtension};
+use crate::server::{live::HubExtension, looks_like_email, sfe, DbExtension};
 
 /// Upper bounds on guest-supplied comment fields. The body is generous (a long
 /// comment is legitimate); name/email are short. Without caps an unauthenticated
@@ -86,13 +86,18 @@ pub async fn list_comments(post_id: i64) -> Result<Vec<CommentView>> {
 /// Post a comment. Logged-in users are attributed; guests must give name+email.
 /// Defaults to `pending`; auto-approves a logged-in user who already has an
 /// approved comment.
-#[post("/api/comments/create", auth: arium_dioxus::auth::Session, db: DbExtension)]
+///
+/// Returns the created [`CommentView`] (real id + final status) so the caller can
+/// reconcile its optimistic placeholder. An approved comment is also broadcast
+/// over the post's live channel so other readers see it without a refetch;
+/// pending comments are not (they aren't publicly visible until moderated).
+#[post("/api/comments/create", auth: arium_dioxus::auth::Session, db: DbExtension, hub: HubExtension)]
 pub async fn create_comment(
     post_id: i64,
     body: String,
     guest_name: Option<String>,
     guest_email: Option<String>,
-) -> Result<()> {
+) -> Result<CommentView> {
     let body = body.trim().to_string();
     if body.is_empty() {
         return Err(ServerFnError::new("Comment cannot be empty.").into());
@@ -207,7 +212,7 @@ pub async fn create_comment(
         "pending"
     };
 
-    sqlx::query(
+    let inserted = sqlx::query(
         "INSERT INTO comments (post_id, author_id, guest_name, guest_email, body, status)
          VALUES (?, ?, ?, ?, ?, ?)",
     )
@@ -221,5 +226,21 @@ pub async fn create_comment(
     .await
     .map_err(sfe)?;
 
-    Ok(())
+    // Re-select the row through the shared projection so `display_name` and
+    // `created_at` resolve exactly as `list_comments` would — the optimistic
+    // client reconciles against this, so it must match what other readers see.
+    let view = sqlx::query_as::<_, CommentView>(&format!(
+        "SELECT {COMMENT_VIEW_COLUMNS} {COMMENT_VIEW_FROM} WHERE cm.id = ?"
+    ))
+    .bind(inserted.last_insert_rowid())
+    .fetch_one(&db.0)
+    .await
+    .map_err(sfe)?;
+
+    // Only approved comments are public, so only they go out live.
+    if view.status == "approved" {
+        hub.publish(post_id, crate::model::LiveEvent::Comment(view.clone()));
+    }
+
+    Ok(view)
 }

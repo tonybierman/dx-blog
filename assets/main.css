@@ -143,3 +143,18 @@ body {
 #echo>p {
     margin: 20px 0px 0px auto;
 }
+
+/* Floating claps (live reactions). Each burst rises out of the reaction bar and
+ * fades; the element is removed by the reader once the animation finishes. */
+@keyframes clap-float {
+    0%   { transform: translateY(0) scale(1);    opacity: 1; }
+    100% { transform: translateY(-80px) scale(1.5); opacity: 0; }
+}
+.clap-float {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    animation: clap-float 1.4s ease-out forwards;
+    pointer-events: none;
+    will-change: transform, opacity;
+}

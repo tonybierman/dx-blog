@@ -12,8 +12,7 @@ use crate::layouts::{
 };
 use crate::model::HomeLayout;
 use crate::pages::widgets::{
-    feed_states, CategoryList, FeaturedPosts, FeedBody, FeedShape, FeedSkeleton, RecentComments,
-    TagList,
+    CategoryList, FeaturedPosts, FeedSection, FeedShape, RecentComments, TagList,
 };
 use crate::server::posts::list_posts;
 use crate::server::settings::get_home_layout;
@@ -199,14 +198,8 @@ fn HomeMeta() -> Element {
 /// one place.
 #[component]
 fn HomeFeed(shape: FeedShape) -> Element {
-    let mut page = use_signal(|| 1i64);
+    let page = use_signal(|| 1i64);
     let posts = use_resource(move || async move { list_posts(page(), None, None).await });
 
-    feed_states!(posts, feed => {
-        let cards = feed.items.clone();
-        let total_pages = feed.total_pages();
-        rsx! {
-            FeedBody { shape, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
-        }
-    })
+    rsx! { FeedSection { posts, shape, page } }
 }

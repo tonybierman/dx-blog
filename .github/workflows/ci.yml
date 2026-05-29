@@ -1,0 +1,130 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-flight runs on the same ref when a new push lands.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0          # disabled for cache efficiency in CI
+  RUST_BACKTRACE: short
+  # Standalone Tailwind CLI version — matches the header in assets/tailwind.css.
+  TAILWIND_VERSION: "4.1.5"
+
+jobs:
+  fmt:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: server
+      # assets/tailwind.css is a generated artifact (gitignored) but the
+      # `asset!()` macro needs it to exist at compile time. The standalone CLI
+      # is self-contained — it resolves `@import "tailwindcss"` without npm.
+      - name: Generate tailwind.css
+        run: |
+          curl -sSL "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-linux-x64" -o ./tailwindcss
+          chmod +x ./tailwindcss
+          ./tailwindcss -i tailwind.css -o assets/tailwind.css
+      # `too_many_arguments` is allowed: several server fns legitimately take
+      # many params (the wire boundary, not a refactor smell).
+      - name: Clippy (server target)
+        run: |
+          cargo clippy --no-default-features --features server,sqlite --all-targets \
+            -- -D warnings -A clippy::too_many_arguments
+
+  test:
+    name: cargo test (server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: server
+      - name: Generate tailwind.css
+        run: |
+          curl -sSL "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-linux-x64" -o ./tailwindcss
+          chmod +x ./tailwindcss
+          ./tailwindcss -i tailwind.css -o assets/tailwind.css
+      # Server-side unit tests (in-memory SQLite + #[tokio::test]).
+      - run: cargo test --no-default-features --features server,sqlite
+
+  wasm:
+    name: check wasm client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wasm
+      - name: Generate tailwind.css
+        run: |
+          curl -sSL "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-linux-x64" -o ./tailwindcss
+          chmod +x ./tailwindcss
+          ./tailwindcss -i tailwind.css -o assets/tailwind.css
+      # The browser side compiles for wasm32 without the `server` feature, so a
+      # change can't silently break hydration. Plain check (not -D warnings):
+      # server-only symbols are dead code here, which is expected.
+      - run: cargo check --no-default-features --features web --target wasm32-unknown-unknown
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tools
+      - run: cargo install --locked cargo-audit
+      # RustSec advisory scan against Cargo.lock.
+      - run: cargo audit
+
+  unused-deps:
+    name: cargo machete
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Honors the [package.metadata.cargo-machete] ignore list in Cargo.toml.
+      - uses: bnjbvr/cargo-machete@main
+
+  secrets:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Invoke the binary directly — gitleaks-action's license check is flaky
+      # on personal accounts and fails closed.
+      - name: Install gitleaks
+        run: |
+          GITLEAKS_VERSION=8.21.2
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+      - run: gitleaks detect --source . --redact --verbose --no-banner

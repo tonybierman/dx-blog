@@ -15,7 +15,7 @@ use crate::server::{render_markdown, require_perm, sfe, unique_slug, DbExtension
 
 /// Edit/delete authorization: Editor+ on the post, OR a global admin token.
 #[cfg(feature = "server")]
-async fn can_edit_post(
+pub(crate) async fn can_edit_post(
     auth: &arium_dioxus::auth::Session,
     db: &arium_dioxus::pool::Pool,
     authority: &arium_dioxus::ResourceAuthorityExt,
@@ -342,6 +342,24 @@ pub async fn delete_category(id: i64) -> Result<()> {
     Ok(())
 }
 
+/// Rename a category. The slug is kept stable so existing `/category/:slug`
+/// links keep resolving; only the display name changes.
+#[post("/api/admin/categories/rename", auth: arium_dioxus::auth::Session, db: DbExtension)]
+pub async fn rename_category(id: i64, name: String) -> Result<()> {
+    require_perm(&auth, SETTINGS_WRITE)?;
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServerFnError::new("Name can't be empty.").into());
+    }
+    sqlx::query("UPDATE categories SET name = ? WHERE id = ?")
+        .bind(&name)
+        .bind(id)
+        .execute(&db.0)
+        .await
+        .map_err(sfe)?;
+    Ok(())
+}
+
 #[post("/api/admin/tags/create", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn create_tag(name: String) -> Result<Tag> {
     require_perm(&auth, SETTINGS_WRITE)?;
@@ -364,6 +382,24 @@ pub async fn delete_tag(id: i64) -> Result<()> {
         .await
         .map_err(sfe)?;
     sqlx::query("DELETE FROM tags WHERE id = ?")
+        .bind(id)
+        .execute(&db.0)
+        .await
+        .map_err(sfe)?;
+    Ok(())
+}
+
+/// Rename a tag. As with categories, the slug stays put so existing
+/// `/tag/:slug` links keep working.
+#[post("/api/admin/tags/rename", auth: arium_dioxus::auth::Session, db: DbExtension)]
+pub async fn rename_tag(id: i64, name: String) -> Result<()> {
+    require_perm(&auth, SETTINGS_WRITE)?;
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServerFnError::new("Name can't be empty.").into());
+    }
+    sqlx::query("UPDATE tags SET name = ? WHERE id = ?")
+        .bind(&name)
         .bind(id)
         .execute(&db.0)
         .await

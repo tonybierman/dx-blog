@@ -3,7 +3,9 @@
 use dioxus::prelude::*;
 
 use crate::layouts::HolyGrailLayout;
-use crate::pages::widgets::{CategoryList, FeedGrid, PaginationBar, TagList};
+use crate::pages::widgets::{
+    CategoryList, FeaturedPosts, FeedGrid, FeedSkeleton, PaginationBar, RecentComments, TagList,
+};
 use crate::server::posts::list_posts;
 
 #[component]
@@ -18,10 +20,8 @@ pub fn HomePage() -> Element {
                 TagList {}
             },
             right: rsx! {
-                div { class: "text-sm",
-                    h3 { class: "mb-2 font-semibold text-white/80", "About" }
-                    p { class: "text-white/50", "A blog built on Dioxus Fullstack." }
-                }
+                FeaturedPosts {}
+                RecentComments {}
             },
             h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
             match &*posts.read() {
@@ -38,7 +38,7 @@ pub fn HomePage() -> Element {
                     }
                 }
                 Some(Err(e)) => rsx! { p { class: "text-red-400", "Failed to load posts: {e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
+                None => rsx! { FeedSkeleton {} },
             }
         }
     }

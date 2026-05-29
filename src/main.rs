@@ -24,7 +24,9 @@ mod pages;
 mod seed;
 mod server;
 
-use pages::auth::{ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage};
+use pages::auth::{
+    AccountPage, ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage,
+};
 use pages::errors::{NotFound, ServerError};
 use pages::home::HomePage;
 use pages::admin::{
@@ -55,6 +57,8 @@ pub enum Route {
     ResetPasswordPage { token: String },
     #[route("/auth/verify?:token")]
     VerifyEmailPage { token: String },
+    #[route("/account")]
+    AccountPage,
 
     // --- Public / Reader ---
     #[route("/")]
@@ -192,7 +196,16 @@ fn App() -> Element {
 
         PermissionsProvider {
             OAuthProvidersProvider {
-                Router::<Route> {}
+                // Catch any error thrown while rendering a route (e.g. a server
+                // fn `?` that bubbled out of a component) and render the /500
+                // page UI in place instead of leaving a blank screen.
+                ErrorBoundary {
+                    handle_error: |error: ErrorContext| {
+                        let detail = error.error().map(|e| e.to_string()).unwrap_or_default();
+                        rsx! { ServerError { detail } }
+                    },
+                    Router::<Route> {}
+                }
             }
         }
     }

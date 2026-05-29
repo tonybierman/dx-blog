@@ -76,11 +76,16 @@ pub async fn list_posts(
     })
 }
 
-/// All published posts, newest first — backs the Masonry archive.
-#[get("/api/archive", db: DbExtension)]
-pub async fn list_archive() -> Result<Vec<crate::model::PostCard>> {
+/// All published posts, newest first — backs the Masonry archive. `#[post]`
+/// (not `#[get]`) so the page argument can ride in the request body.
+#[post("/api/archive", db: DbExtension)]
+pub async fn list_archive(page: i64) -> Result<PostFeed> {
     use crate::model::PostCard;
-    let rows = sqlx::query_as::<_, PostCard>(
+    let pool = &db.0;
+    let page = page.max(1);
+    let offset = (page - 1) * PER_PAGE;
+
+    let items = sqlx::query_as::<_, PostCard>(
         r#"
         SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
                p.author_id,
@@ -92,19 +97,38 @@ pub async fn list_archive() -> Result<Vec<crate::model::PostCard>> {
         LEFT JOIN categories c ON c.id = p.category_id
         WHERE p.status = 'published'
         ORDER BY p.published_at DESC, p.id DESC
+        LIMIT ? OFFSET ?
         "#,
     )
-    .fetch_all(&db.0)
+    .bind(PER_PAGE)
+    .bind(offset)
+    .fetch_all(pool)
     .await
     .map_err(sfe)?;
-    Ok(rows)
+
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM posts WHERE status = 'published'")
+            .fetch_one(pool)
+            .await
+            .map_err(sfe)?;
+
+    Ok(PostFeed {
+        items,
+        total,
+        page,
+        per_page: PER_PAGE,
+    })
 }
 
-/// Published posts authored by a given username.
+/// Published posts authored by a given username, paginated.
 #[post("/api/author-posts", db: DbExtension)]
-pub async fn posts_by_author(username: String) -> Result<Vec<crate::model::PostCard>> {
+pub async fn posts_by_author(username: String, page: i64) -> Result<PostFeed> {
     use crate::model::PostCard;
-    let rows = sqlx::query_as::<_, PostCard>(
+    let pool = &db.0;
+    let page = page.max(1);
+    let offset = (page - 1) * PER_PAGE;
+
+    let items = sqlx::query_as::<_, PostCard>(
         r#"
         SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
                p.author_id,
@@ -116,17 +140,71 @@ pub async fn posts_by_author(username: String) -> Result<Vec<crate::model::PostC
         LEFT JOIN categories c ON c.id = p.category_id
         WHERE p.status = 'published' AND u.username = ?
         ORDER BY p.published_at DESC, p.id DESC
+        LIMIT ? OFFSET ?
         "#,
     )
     .bind(&username)
+    .bind(PER_PAGE)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .map_err(sfe)?;
+
+    let total: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM posts p JOIN users u ON u.id = p.author_id
+        WHERE p.status = 'published' AND u.username = ?
+        "#,
+    )
+    .bind(&username)
+    .fetch_one(pool)
+    .await
+    .map_err(sfe)?;
+
+    Ok(PostFeed {
+        items,
+        total,
+        page,
+        per_page: PER_PAGE,
+    })
+}
+
+/// The most-viewed published posts — backs the home "Featured" sidebar. Public;
+/// falls back to the newest posts when there are no recorded views yet.
+#[post("/api/posts/featured", db: DbExtension)]
+pub async fn featured_posts(limit: i64) -> Result<Vec<crate::model::PostCard>> {
+    use crate::model::PostCard;
+    let limit = limit.clamp(1, 10);
+    let rows = sqlx::query_as::<_, PostCard>(
+        r#"
+        SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
+               p.author_id,
+               COALESCE(u.display_name, u.username) AS author_name,
+               c.name AS category_name,
+               p.status, p.published_at
+        FROM posts p
+        JOIN users u ON u.id = p.author_id
+        LEFT JOIN categories c ON c.id = p.category_id
+        LEFT JOIN (SELECT post_id, COUNT(*) AS views FROM post_views GROUP BY post_id) v
+          ON v.post_id = p.id
+        WHERE p.status = 'published'
+        ORDER BY COALESCE(v.views, 0) DESC, p.published_at DESC, p.id DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(limit)
     .fetch_all(&db.0)
     .await
     .map_err(sfe)?;
     Ok(rows)
 }
 
-/// A single published post by slug, with author + category joined in.
-#[post("/api/post", db: DbExtension)]
+/// A single post by slug, with author + category joined in. Published posts are
+/// public; an unpublished (draft) post is returned only to a caller who can edit
+/// it (Editor+ on the post, or a global admin) so authors can preview their own
+/// drafts. Everyone else gets `None` for a draft.
+#[post("/api/post", auth: arium_dioxus::auth::Session, db: DbExtension, authority: arium_dioxus::ResourceAuthorityExt)]
 pub async fn get_post(slug: String) -> Result<Option<PostDetail>> {
     let post = sqlx::query_as::<_, PostDetail>(
         r#"
@@ -141,12 +219,23 @@ pub async fn get_post(slug: String) -> Result<Option<PostDetail>> {
         JOIN users u ON u.id = p.author_id
         LEFT JOIN user_profiles up ON up.user_id = p.author_id
         LEFT JOIN categories c ON c.id = p.category_id
-        WHERE p.slug = ? AND p.status = 'published'
+        WHERE p.slug = ?
         "#,
     )
     .bind(&slug)
     .fetch_optional(&db.0)
     .await
     .map_err(sfe)?;
+
+    // Hide drafts from anyone who can't edit them.
+    if let Some(ref p) = post {
+        if p.status != "published"
+            && crate::server::admin::can_edit_post(&auth, &db.0, &authority, p.id)
+                .await
+                .is_err()
+        {
+            return Ok(None);
+        }
+    }
     Ok(post)
 }

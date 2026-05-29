@@ -3,10 +3,13 @@
 
 use dioxus::prelude::*;
 
-use arium_dioxus::ui::use_permissions;
+use arium_dioxus::ui::{use_permissions, ResourceGate};
+use arium_dioxus::ResourceRole;
 
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
-use crate::pages::widgets::{CategoryList, FeedGrid, PaginationBar, PostCardView, TagList};
+use crate::pages::widgets::{
+    CategoryList, FeedGrid, FeedSkeleton, PaginationBar, PostCardView, TagList,
+};
 use crate::server::authors::get_author_profile;
 use crate::server::comments::{create_comment, list_comments};
 use crate::server::posts::{get_post, list_archive, list_posts, posts_by_author};
@@ -32,8 +35,27 @@ pub fn PostDetail(slug: String) -> Element {
                     }
                     Some(Ok(None)) => rsx! { p { class: "mt-8 text-white/60", "Post not found." } },
                     Some(Err(e)) => rsx! { p { class: "mt-8 text-red-400", "Error: {e}" } },
-                    None => rsx! { p { class: "mt-8 text-white/50", "Loading…" } },
+                    None => rsx! { PostDetailSkeleton {} },
                 }
+            }
+        }
+    }
+}
+
+/// Article-shaped placeholder shown while a single post loads.
+#[component]
+fn PostDetailSkeleton() -> Element {
+    use arium_dioxus::ui::components::skeleton::Skeleton;
+    rsx! {
+        div { class: "mt-8 space-y-4",
+            Skeleton { style: "height: 16rem; width: 100%; border-radius: 0.75rem;" }
+            Skeleton { style: "height: 2rem; width: 70%;" }
+            Skeleton { style: "height: 1rem; width: 12rem;" }
+            div { class: "mt-6 space-y-3",
+                Skeleton { style: "height: 0.9rem; width: 100%;" }
+                Skeleton { style: "height: 0.9rem; width: 95%;" }
+                Skeleton { style: "height: 0.9rem; width: 90%;" }
+                Skeleton { style: "height: 0.9rem; width: 97%;" }
             }
         }
     }
@@ -49,12 +71,30 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
         });
     });
 
+    let is_draft = post.status != "published";
+
     rsx! {
         article {
+            if is_draft {
+                div { class: "mb-6 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200",
+                    "Draft preview — this post is not published and is only visible to you."
+                }
+            }
             if let Some(img) = post.featured_image_url.clone() {
                 img { class: "mb-6 max-h-96 w-full rounded-xl object-cover", src: "{img}", alt: "{post.title}" }
             }
-            h1 { class: "text-3xl font-bold", "{post.title}" }
+            div { class: "flex items-start justify-between gap-4",
+                h1 { class: "text-3xl font-bold", "{post.title}" }
+                // Editors/owners of this post (or global admins) get an inline
+                // edit link straight to the admin editor.
+                ResourceGate { kind: "post", id: post.id, min_role: ResourceRole::Editor,
+                    Link {
+                        to: Route::AdminPostEdit { id: post.id },
+                        class: "shrink-0 rounded border border-white/15 px-2 py-1 text-sm text-white/70 hover:bg-white/5",
+                        "Edit"
+                    }
+                }
+            }
             div { class: "mt-2 flex gap-2 text-sm text-white/50",
                 Link {
                     to: Route::AuthorProfile { slug: post.author_username.clone() },
@@ -185,7 +225,7 @@ fn PaginatedFeed(category_slug: Option<String>, tag_slug: Option<String>) -> Ele
                 }
             }
             Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
-            None => rsx! { p { class: "text-white/50", "Loading…" } },
+            None => rsx! { FeedSkeleton {} },
         }
     }
 }
@@ -220,10 +260,11 @@ pub fn TagFeed(slug: String) -> Element {
         Some(Ok(Some(t))) => t.name.clone(),
         _ => slug.clone(),
     };
+    let mut page = use_signal(|| 1i64);
     let posts = {
         let slug = slug.clone();
         use_resource(use_reactive!(|(slug,)| async move {
-            list_posts(1, None, Some(slug)).await
+            list_posts(page(), None, Some(slug)).await
         }))
     };
 
@@ -231,17 +272,24 @@ pub fn TagFeed(slug: String) -> Element {
         BentoGridLayout {
             left: rsx! { h1 { class: "text-2xl font-bold", "#{title}" } },
             match &*posts.read() {
-                Some(Ok(feed)) => rsx! {
-                    for (i, card) in feed.items.clone().into_iter().enumerate() {
-                        div {
-                            key: "{card.id}",
-                            class: if i == 0 { "col-span-2 row-span-2" } else { "" },
-                            PostCardView { card }
+                Some(Ok(feed)) => {
+                    let total_pages = feed.total_pages();
+                    rsx! {
+                        for (i, card) in feed.items.clone().into_iter().enumerate() {
+                            div {
+                                key: "{card.id}",
+                                class: if i == 0 { "col-span-2 row-span-2" } else { "" },
+                                PostCardView { card }
+                            }
+                        }
+                        // Span the full bento row so the pager sits below the tiles.
+                        div { style: "grid-column: 1 / -1;",
+                            PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
                         }
                     }
-                },
+                }
                 Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
+                None => rsx! { FeedSkeleton {} },
             }
         }
     }
@@ -253,9 +301,12 @@ pub fn AuthorProfile(slug: String) -> Element {
         let slug = slug.clone();
         use_resource(use_reactive!(|(slug,)| async move { get_author_profile(slug).await }))
     };
+    let mut page = use_signal(|| 1i64);
     let posts = {
         let slug = slug.clone();
-        use_resource(use_reactive!(|(slug,)| async move { posts_by_author(slug).await }))
+        use_resource(use_reactive!(|(slug,)| async move {
+            posts_by_author(slug, page()).await
+        }))
     };
 
     let sidebar = match &*profile.read() {
@@ -282,9 +333,16 @@ pub fn AuthorProfile(slug: String) -> Element {
             left: sidebar,
             h1 { class: "mb-6 text-2xl font-bold", "Posts" }
             match &*posts.read() {
-                Some(Ok(cards)) => rsx! { FeedGrid { cards: cards.clone() } },
+                Some(Ok(feed)) => {
+                    let cards = feed.items.clone();
+                    let total_pages = feed.total_pages();
+                    rsx! {
+                        FeedGrid { cards }
+                        PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
+                    }
+                }
                 Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
+                None => rsx! { FeedSkeleton {} },
             }
         }
     }
@@ -292,20 +350,29 @@ pub fn AuthorProfile(slug: String) -> Element {
 
 #[component]
 pub fn Archive() -> Element {
-    let posts = use_resource(list_archive);
+    let mut page = use_signal(|| 1i64);
+    let posts = use_resource(move || async move { list_archive(page()).await });
     rsx! {
         MasonryLayout {
             h1 { class: "mb-6 text-2xl font-bold", "Archive" }
             match &*posts.read() {
-                Some(Ok(cards)) => rsx! {
-                    for card in cards.clone() {
-                        div { key: "{card.id}", class: "mb-4 inline-block w-full break-inside-avoid",
-                            PostCardView { card }
+                Some(Ok(feed)) => {
+                    let total_pages = feed.total_pages();
+                    rsx! {
+                        for card in feed.items.clone() {
+                            div { key: "{card.id}", class: "mb-4 inline-block w-full break-inside-avoid",
+                                PostCardView { card }
+                            }
+                        }
+                        // `column-span: all` lifts the pager out of the
+                        // CSS-columns flow so it spans the full masonry width.
+                        div { style: "column-span: all;",
+                            PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
                         }
                     }
-                },
+                }
                 Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
+                None => rsx! { FeedSkeleton {} },
             }
         }
     }
@@ -346,7 +413,7 @@ pub fn SearchResults(q: String) -> Element {
                     }
                 }
                 Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
+                None => rsx! { FeedSkeleton {} },
             }
         }
     }

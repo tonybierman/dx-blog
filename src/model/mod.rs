@@ -83,6 +83,18 @@ wire_struct! {
 }
 
 wire_struct! {
+    /// A recent approved comment with its post's title/slug, for the home sidebar.
+    pub struct RecentComment {
+        pub id: i64,
+        pub post_title: String,
+        pub post_slug: String,
+        pub display_name: String,
+        pub body: String,
+        pub created_at: String,
+    }
+}
+
+wire_struct! {
     pub struct AuthorProfile {
         pub user_id: i64,
         pub username: String,

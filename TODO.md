@@ -5,23 +5,23 @@ authoring, seed data, FTS search). This is the backlog of follow-ups, grouped by
 theme. Check items off as they land.
 
 ## Auth & accounts
-- [ ] Add an **Account** route wrapping arium's `AccountSettings` (change password, display name, delete account)
-- [ ] Wire **MFA** routes/components (`MfaSetup`, `MfaChallenge`) — arium supports it; not surfaced yet
+- [x] Add an **Account** route (`/account`) wrapping arium's `AccountSettings` (change password, display name, delete account); linked from the header
+- [x] Wire **MFA** routes/components — `MfaSetup` embedded on `/account`; `MfaChallenge` handles `LoginOutcome::MfaRequired` in the login flow
 - [ ] Verify the **forgot-password / reset / verify-email** flows end-to-end with a real SMTP mailer (set `SMTP_*` in `.env`)
-- [ ] Let authors **edit their own post from the post detail page** via `ResourceGate` (edit affordance), not just the admin table
-- [ ] Author-facing **draft preview** (drafts are currently invisible on public pages even to their author)
+- [x] Let authors **edit their own post from the post detail page** via `ResourceGate` (edit affordance), not just the admin table
+- [x] Author-facing **draft preview** (drafts are currently invisible on public pages even to their author)
 
 ## Reader experience
-- [ ] Home right sidebar: real **featured posts** + **recent comments** (currently a placeholder "About" box)
+- [x] Home right sidebar: real **featured posts** (most-viewed) + **recent comments** (replaced the placeholder "About" box)
 - [ ] Search **facets** (category / tag / date) in the right sidebar, beyond the text box
-- [ ] **Pagination** for tag / author / archive feeds (currently single-page / unbounded)
+- [x] **Pagination** for tag / author / archive feeds (currently single-page / unbounded)
 - [ ] Subscriber **double opt-in** confirmation flow (the `confirmed` column exists but isn't exercised)
-- [ ] Empty-state and loading **skeletons** instead of plain "Loading…"
+- [x] Empty-state and loading **skeletons** instead of plain "Loading…" (reader feeds, home, post detail)
 
 ## Authoring & admin
-- [ ] Featured-image picker that **selects from the media library** (currently a URL text field)
-- [ ] Debounce the editor's **live-preview** server round-trip (fires on every keystroke today)
-- [ ] Category/tag **edit** (rename), not just create/delete, in Settings
+- [x] Featured-image picker that **selects from the media library** (URL field + "Library" thumbnail picker + preview)
+- [x] Debounce the editor's **live-preview** server round-trip (fires on every keystroke today) — 400ms via `dioxus-sdk-time`
+- [x] Category/tag **edit** (rename), not just create/delete, in Settings (slug kept stable)
 - [ ] Sort/filter controls on the admin **post table** (PLAN asks for sortable/filterable)
 - [ ] Real **analytics** beyond counts: top referrers, views-over-time
 
@@ -34,7 +34,7 @@ theme. Check items off as they land.
 - [ ] **Commit** the work (nothing is committed yet) on a branch + open a PR
 - [ ] Add **tests**: server-fn round-trips (list/create/authz), slug uniqueness, markdown render/sanitize, comment auto-approve
 - [ ] Real **multipart upload** endpoint (current upload is base64 via a server fn — works but heavier)
-- [ ] Server-side **error boundary** so runtime errors route to `/500` instead of a blank state
+- [x] Server-side **error boundary** so runtime errors route to `/500` instead of a blank state
 - [ ] Reseed note: `rm data/blog.db` then restart to pick up seed-content changes (e.g. the de-duplicated post titles)
 - [ ] Production config review: secure cookies, `DATABASE_URL`, disable `DX_AUTH_SKIP_EMAIL_VERIFICATION`, set a bootstrap admin
 

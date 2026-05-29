@@ -4,7 +4,7 @@ use dioxus::prelude::*;
 
 use arium_dioxus::ui::components::skeleton::Skeleton;
 
-use crate::model::PostCard;
+use crate::model::{PostCard, PostFeed};
 use crate::server::comments::recent_comments;
 use crate::server::posts::featured_posts;
 use crate::server::taxonomy::{list_categories, list_tags};
@@ -71,7 +71,6 @@ macro_rules! feed_states {
         states
     }};
 }
-pub(crate) use feed_states;
 
 /// How a feed's cards are arranged inside its layout. Most layouts render a
 /// responsive [`FeedGrid`]; Bento and Masonry arrange the cards themselves and
@@ -312,6 +311,28 @@ pub fn FeedGrid(cards: Vec<PostCard>) -> Element {
             }
         }
     }
+}
+
+/// A complete paginated feed: the load / error / skeleton states (via
+/// `feed_states!`) wrapped around a [`FeedBody`], with the pager wired back to
+/// the caller's `page` signal. Every reader feed and the home feed render through
+/// this, so the `feed_states!(posts, feed => … FeedBody { … on_change: page.set })`
+/// block lives in exactly one place. The caller still owns `page` — its fetch
+/// closure reads `page()` to load the right slice — and the `posts` resource;
+/// this just renders them and drives `page` on pager clicks.
+#[component]
+pub fn FeedSection(
+    posts: Resource<Result<PostFeed>>,
+    shape: FeedShape,
+    mut page: Signal<i64>,
+) -> Element {
+    feed_states!(posts, feed => {
+        let cards = feed.items.clone();
+        let total_pages = feed.total_pages();
+        rsx! {
+            FeedBody { shape, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
+        }
+    })
 }
 
 /// A page of feed cards plus its pager, arranged per [`FeedShape`]. This is the

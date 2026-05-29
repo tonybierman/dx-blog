@@ -7,9 +7,7 @@ use arium_dioxus::ui::{use_permissions, ResourceGate};
 use arium_dioxus::ResourceRole;
 
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
-use crate::pages::widgets::{
-    feed_states, CategoryList, FeedBody, FeedShape, FeedSkeleton, TagList,
-};
+use crate::pages::widgets::{CategoryList, FeedSection, FeedShape, TagList};
 use crate::server::authors::get_author_profile;
 use crate::server::comments::{create_comment, list_comments};
 use crate::server::posts::{get_post, list_archive, list_posts, posts_by_author};
@@ -311,13 +309,7 @@ fn PaginatedFeed(category_slug: Option<String>, tag_slug: Option<String>) -> Ele
         list_posts(page(), category_slug, tag_slug).await
     }));
 
-    feed_states!(posts, feed => {
-        let cards = feed.items.clone();
-        let total_pages = feed.total_pages();
-        rsx! {
-            FeedBody { shape: FeedShape::Grid, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
-        }
-    })
+    rsx! { FeedSection { posts, shape: FeedShape::Grid, page } }
 }
 
 #[component]
@@ -375,13 +367,7 @@ pub fn TagFeed(slug: String) -> Element {
                 h1 { class: "text-2xl font-bold", "#{title}" }
                 TagList {}
             },
-            {feed_states!(posts, feed => {
-                let cards = feed.items.clone();
-                let total_pages = feed.total_pages();
-                rsx! {
-                    FeedBody { shape: FeedShape::Bento, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
-                }
-            })}
+            FeedSection { posts, shape: FeedShape::Bento, page }
         }
     }
 }
@@ -433,31 +419,19 @@ pub fn AuthorProfile(slug: String) -> Element {
         HolyGrailLayout {
             left: sidebar,
             h1 { class: "mb-6 text-2xl font-bold", "Posts" }
-            {feed_states!(posts, feed => {
-                let cards = feed.items.clone();
-                let total_pages = feed.total_pages();
-                rsx! {
-                    FeedBody { shape: FeedShape::Grid, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
-                }
-            })}
+            FeedSection { posts, shape: FeedShape::Grid, page }
         }
     }
 }
 
 #[component]
 pub fn Archive() -> Element {
-    let mut page = use_signal(|| 1i64);
+    let page = use_signal(|| 1i64);
     let posts = use_resource(move || async move { list_archive(page()).await });
     rsx! {
         MasonryLayout {
             h1 { class: "mb-6 text-2xl font-bold", "Archive" }
-            {feed_states!(posts, feed => {
-                let cards = feed.items.clone();
-                let total_pages = feed.total_pages();
-                rsx! {
-                    FeedBody { shape: FeedShape::Masonry, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
-                }
-            })}
+            FeedSection { posts, shape: FeedShape::Masonry, page }
         }
     }
 }
@@ -554,15 +528,10 @@ pub fn SearchResults(q: String) -> Element {
                 value: "{query}",
                 oninput: move |e| { query.set(e.value()); page.set(1); },
             }
-            {feed_states!(results, feed => {
-                let cards = feed.items.clone();
-                let total = feed.total;
-                let total_pages = feed.total_pages();
-                rsx! {
-                    p { class: "mb-4 text-sm text-white/50", "{total} result(s)" }
-                    FeedBody { shape: FeedShape::Grid, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
-                }
-            })}
+            if let Some(Ok(feed)) = &*results.read() {
+                p { class: "mb-4 text-sm text-white/50", "{feed.total} result(s)" }
+            }
+            FeedSection { posts: results, shape: FeedShape::Grid, page }
         }
     }
 }

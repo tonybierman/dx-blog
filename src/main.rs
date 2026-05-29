@@ -34,7 +34,8 @@ use pages::admin::{
     AdminPostNew, AdminSettings, AdminUsers,
 };
 use pages::reader::{
-    Archive, AuthorProfile, CategoryFeed, PostDetail, SearchResults, Subscribe, TagFeed,
+    Archive, AuthorProfile, CategoryFeed, ConfirmSubscription, PostDetail, SearchResults,
+    Subscribe, TagFeed,
 };
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
@@ -77,6 +78,8 @@ pub enum Route {
     SearchResults { q: String },
     #[route("/subscribe")]
     Subscribe,
+    #[route("/subscribe/confirm?:token")]
+    ConfirmSubscription { token: String },
 
     // --- Admin (gated by RequirePermission in each page) ---
     #[route("/admin")]

@@ -72,3 +72,8 @@ postgres = ["arium-dioxus/postgres", "sqlx?/postgres"]
 # cargo-machete to find, but dropping it silently disables hydration.
 [package.metadata.cargo-machete]
 ignored = ["dioxus-web"]
+
+# Tokio's test macro + current-thread runtime drive the async server-side unit
+# tests (run with `--no-default-features --features server,sqlite`).
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

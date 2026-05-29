@@ -14,7 +14,7 @@ use crate::server::authors::get_author_profile;
 use crate::server::comments::{create_comment, list_comments};
 use crate::server::posts::{get_post, list_archive, list_posts, posts_by_author};
 use crate::server::search::search_posts;
-use crate::server::subscribers::subscribe;
+use crate::server::subscribers::{confirm_subscription, subscribe};
 use crate::server::taxonomy::{get_category, get_tag};
 use crate::Route;
 
@@ -382,17 +382,77 @@ pub fn Archive() -> Element {
 pub fn SearchResults(q: String) -> Element {
     let mut query = use_signal(|| q.clone());
     let mut page = use_signal(|| 1i64);
+    // Facet state — category/tag slugs ("" = any) and a date bucket.
+    let mut category = use_signal(String::new);
+    let mut tag = use_signal(String::new);
+    let mut date_range = use_signal(String::new);
+
+    let cats = use_resource(crate::server::taxonomy::list_categories);
+    let tags = use_resource(crate::server::taxonomy::list_tags);
+
     let results = use_resource(move || {
         let q = query();
-        async move { search_posts(q, page()).await }
+        let (c, t, d) = (category(), tag(), date_range());
+        async move {
+            let c = if c.is_empty() { None } else { Some(c) };
+            let t = if t.is_empty() { None } else { Some(t) };
+            let d = if d.is_empty() { None } else { Some(d) };
+            search_posts(q, page(), c, t, d).await
+        }
     });
 
     rsx! {
         HolyGrailLayout {
             right: rsx! {
-                div { class: "text-sm",
-                    h3 { class: "mb-2 font-semibold text-white/80", "Refine" }
-                    p { class: "text-white/40", "Search title and body." }
+                div { class: "space-y-5 text-sm",
+                    h3 { class: "font-semibold text-white/80", "Refine" }
+                    // Category facet
+                    div {
+                        label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "Category" }
+                        select {
+                            class: "w-full rounded border border-white/15 bg-transparent px-2 py-1.5",
+                            onchange: move |e| { category.set(e.value()); page.set(1); },
+                            option { value: "", selected: category().is_empty(), "All categories" }
+                            if let Some(Ok(list)) = &*cats.read() {
+                                for c in list.clone() {
+                                    option { value: "{c.slug}", selected: category() == c.slug, "{c.name}" }
+                                }
+                            }
+                        }
+                    }
+                    // Tag facet
+                    div {
+                        label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "Tag" }
+                        select {
+                            class: "w-full rounded border border-white/15 bg-transparent px-2 py-1.5",
+                            onchange: move |e| { tag.set(e.value()); page.set(1); },
+                            option { value: "", selected: tag().is_empty(), "All tags" }
+                            if let Some(Ok(list)) = &*tags.read() {
+                                for t in list.clone() {
+                                    option { value: "{t.slug}", selected: tag() == t.slug, "#{t.name}" }
+                                }
+                            }
+                        }
+                    }
+                    // Date facet
+                    div {
+                        label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "Published" }
+                        select {
+                            class: "w-full rounded border border-white/15 bg-transparent px-2 py-1.5",
+                            onchange: move |e| { date_range.set(e.value()); page.set(1); },
+                            option { value: "", selected: date_range().is_empty(), "Any time" }
+                            option { value: "week", selected: date_range() == "week", "Past week" }
+                            option { value: "month", selected: date_range() == "month", "Past month" }
+                            option { value: "year", selected: date_range() == "year", "Past year" }
+                        }
+                    }
+                    if !category().is_empty() || !tag().is_empty() || !date_range().is_empty() {
+                        button {
+                            class: "text-xs text-sky-400 hover:underline",
+                            onclick: move |_| { category.set(String::new()); tag.set(String::new()); date_range.set(String::new()); page.set(1); },
+                            "Clear filters"
+                        }
+                    }
                 }
             },
             h1 { class: "mb-4 text-2xl font-bold", "Search" }
@@ -430,7 +490,7 @@ pub fn Subscribe() -> Element {
             match subscribe(e).await {
                 Ok(()) => {
                     email.set(String::new());
-                    status.set("You're subscribed! 🎉".into());
+                    status.set("Almost there — check your inbox to confirm your subscription.".into());
                 }
                 Err(err) => status.set(arium_dioxus::friendly_server_error(err)),
             }
@@ -458,6 +518,38 @@ pub fn Subscribe() -> Element {
                 }
                 if !status().is_empty() {
                     p { class: "text-sm text-white/70", "{status}" }
+                }
+                Link { to: Route::HomePage, class: "text-sm text-white/50 hover:underline", "← Home" }
+            }
+        }
+    }
+}
+
+/// Landing page for the confirmation link in the double opt-in email. Consumes
+/// the token on mount and reports whether the subscription was confirmed.
+#[component]
+pub fn ConfirmSubscription(token: String) -> Element {
+    let outcome = use_resource(use_reactive!(|(token,)| async move {
+        confirm_subscription(token).await
+    }));
+
+    rsx! {
+        FullBleedLayout {
+            div { class: "flex min-h-screen flex-col items-center justify-center gap-4 p-4 text-center",
+                match &*outcome.read() {
+                    Some(Ok(true)) => rsx! {
+                        h1 { class: "text-3xl font-bold", "Subscription confirmed 🎉" }
+                        p { class: "max-w-md text-white/60", "Thanks — you'll now receive new posts in your inbox." }
+                    },
+                    Some(Ok(false)) => rsx! {
+                        h1 { class: "text-3xl font-bold", "Link expired" }
+                        p { class: "max-w-md text-white/60",
+                            "This confirmation link is invalid or has already been used. Try subscribing again."
+                        }
+                        Link { to: Route::Subscribe, class: "text-sm text-sky-400 hover:underline", "Subscribe →" }
+                    },
+                    Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
+                    None => rsx! { p { class: "text-white/50", "Confirming…" } },
                 }
                 Link { to: Route::HomePage, class: "text-sm text-white/50 hover:underline", "← Home" }
             }

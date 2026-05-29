@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS subscribers (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Double opt-in confirmation tokens. A fresh subscribe replaces any pending
+-- token for that subscriber; confirming consumes (deletes) the row.
+CREATE TABLE IF NOT EXISTS subscriber_tokens (
+    token         TEXT PRIMARY KEY,
+    subscriber_id INTEGER NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS media (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     filename    TEXT NOT NULL,

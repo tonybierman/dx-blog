@@ -166,9 +166,15 @@ pub async fn delete_post(id: i64) -> Result<()> {
     Ok(())
 }
 
-/// Posts visible to the current author/admin (admins see all; authors see own).
-#[get("/api/admin/posts", auth: arium_dioxus::auth::Session, db: DbExtension)]
-pub async fn admin_list_posts() -> Result<Vec<PostCard>> {
+/// Posts visible to the current author/admin (admins see all; authors see own),
+/// optionally filtered by status and sorted. `status_filter` is `None`/empty for
+/// all statuses; `sort` is one of a fixed whitelist (the ORDER BY clause is
+/// chosen from constants, never interpolated from user input).
+#[post("/api/admin/posts", auth: arium_dioxus::auth::Session, db: DbExtension)]
+pub async fn admin_list_posts(
+    status_filter: Option<String>,
+    sort: Option<String>,
+) -> Result<Vec<PostCard>> {
     let uid = require_perm(&auth, POSTS_WRITE)?;
     let is_admin = auth
         .current_user
@@ -176,7 +182,19 @@ pub async fn admin_list_posts() -> Result<Vec<PostCard>> {
         .map(|u| u.permissions.contains(POSTS_WRITE_ANY))
         .unwrap_or(false);
 
-    let rows = sqlx::query_as::<_, PostCard>(
+    let status_filter = status_filter.filter(|s| !s.is_empty());
+
+    let order_by = match sort.as_deref() {
+        Some("title") => "p.title COLLATE NOCASE ASC, p.id DESC",
+        Some("title_desc") => "p.title COLLATE NOCASE DESC, p.id DESC",
+        Some("status") => "p.status ASC, p.updated_at DESC",
+        Some("published") => "p.published_at IS NULL, p.published_at DESC, p.id DESC",
+        Some("oldest") => "p.updated_at ASC, p.id ASC",
+        // "recent" / None / anything unrecognised
+        _ => "p.updated_at DESC, p.id DESC",
+    };
+
+    let sql = format!(
         r#"
         SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
                p.author_id,
@@ -187,14 +205,19 @@ pub async fn admin_list_posts() -> Result<Vec<PostCard>> {
         JOIN users u ON u.id = p.author_id
         LEFT JOIN categories c ON c.id = p.category_id
         WHERE (? = 1 OR p.author_id = ?)
-        ORDER BY p.updated_at DESC, p.id DESC
-        "#,
-    )
-    .bind(is_admin as i64)
-    .bind(uid)
-    .fetch_all(&db.0)
-    .await
-    .map_err(sfe)?;
+          AND (? IS NULL OR p.status = ?)
+        ORDER BY {order_by}
+        "#
+    );
+
+    let rows = sqlx::query_as::<_, PostCard>(&sql)
+        .bind(is_admin as i64)
+        .bind(uid)
+        .bind(&status_filter)
+        .bind(&status_filter)
+        .fetch_all(&db.0)
+        .await
+        .map_err(sfe)?;
     Ok(rows)
 }
 

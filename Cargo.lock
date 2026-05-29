@@ -1866,6 +1866,7 @@ dependencies = [
  "serde",
  "slug",
  "sqlx",
+ "tokio",
  "tower-http",
 ]
 

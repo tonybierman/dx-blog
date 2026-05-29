@@ -13,7 +13,7 @@ use crate::auth_tokens::{
 };
 use crate::model::{AnalyticsSummary, PostEditData};
 use crate::server::admin::*;
-use crate::server::analytics::{analytics_summary, top_posts};
+use crate::server::analytics::{analytics_summary, top_posts, top_referrers, views_over_time};
 use crate::server::taxonomy::{list_categories, list_tags};
 use crate::Route;
 
@@ -109,6 +109,8 @@ pub fn AdminDashboard() -> Element {
 pub fn AdminAnalytics() -> Element {
     let summary = use_resource(analytics_summary);
     let top = use_resource(top_posts);
+    let referrers = use_resource(top_referrers);
+    let series = use_resource(views_over_time);
     rsx! {
         AdminShell { active: "analytics".to_string(),
             h1 { class: "mb-6 text-2xl font-bold", "Analytics" }
@@ -117,18 +119,66 @@ pub fn AdminAnalytics() -> Element {
                 Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
                 None => rsx! { p { class: "text-white/50", "Loading…" } },
             }
-            h2 { class: "mb-3 mt-8 text-lg font-semibold", "Top posts" }
-            match &*top.read() {
-                Some(Ok(list)) if !list.is_empty() => rsx! {
-                    ul { class: "space-y-1 text-sm",
-                        for p in list.clone() {
-                            li { key: "{p.id}", class: "text-white/70", "{p.title}" }
+
+            h2 { class: "mb-3 mt-8 text-lg font-semibold", "Views over time" }
+            div { class: "rounded-xl border border-white/10 bg-white/[0.03] p-4",
+                match &*series.read() {
+                    Some(Ok(days)) if !days.is_empty() => {
+                        let days = days.clone();
+                        let peak = days.iter().map(|d| d.views).max().unwrap_or(1).max(1);
+                        rsx! {
+                            div { class: "flex h-40 items-end gap-1",
+                                for d in days {
+                                    div {
+                                        key: "{d.day}",
+                                        class: "group relative flex-1 rounded-t bg-sky-500/70 hover:bg-sky-400",
+                                        style: "height: {(d.views * 100) / peak}%",
+                                        title: "{d.day}: {d.views} views",
+                                    }
+                                }
+                            }
                         }
                     }
-                },
-                Some(Ok(_)) => rsx! { p { class: "text-white/40", "No views yet." } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
-                None => rsx! { p { class: "text-white/50", "…" } },
+                    Some(Ok(_)) => rsx! { p { class: "text-white/40", "No views in the last 30 days." } },
+                    Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                    None => rsx! { p { class: "text-white/50", "…" } },
+                }
+            }
+
+            div { class: "mt-8 grid gap-8 md:grid-cols-2",
+                section {
+                    h2 { class: "mb-3 text-lg font-semibold", "Top posts" }
+                    match &*top.read() {
+                        Some(Ok(list)) if !list.is_empty() => rsx! {
+                            ul { class: "space-y-1 text-sm",
+                                for p in list.clone() {
+                                    li { key: "{p.id}", class: "text-white/70", "{p.title}" }
+                                }
+                            }
+                        },
+                        Some(Ok(_)) => rsx! { p { class: "text-white/40", "No views yet." } },
+                        Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                        None => rsx! { p { class: "text-white/50", "…" } },
+                    }
+                }
+                section {
+                    h2 { class: "mb-3 text-lg font-semibold", "Top referrers" }
+                    match &*referrers.read() {
+                        Some(Ok(list)) if !list.is_empty() => rsx! {
+                            ul { class: "space-y-1 text-sm",
+                                for (i, r) in list.clone().into_iter().enumerate() {
+                                    li { key: "{i}", class: "flex items-center justify-between gap-3",
+                                        span { class: "truncate text-white/70", title: "{r.referrer}", "{r.referrer}" }
+                                        span { class: "shrink-0 tabular-nums text-white/50", "{r.views}" }
+                                    }
+                                }
+                            }
+                        },
+                        Some(Ok(_)) => rsx! { p { class: "text-white/40", "No referrers yet." } },
+                        Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                        None => rsx! { p { class: "text-white/50", "…" } },
+                    }
+                }
             }
         }
     }
@@ -138,12 +188,51 @@ pub fn AdminAnalytics() -> Element {
 
 #[component]
 pub fn AdminPostList() -> Element {
-    let mut posts = use_resource(admin_list_posts);
+    // Filter (status) + sort state; the resource refetches whenever either changes.
+    let mut status_filter = use_signal(String::new);
+    let mut sort = use_signal(|| "recent".to_string());
+    let mut posts = use_resource(move || {
+        let st = status_filter();
+        let so = sort();
+        async move {
+            let st = if st.is_empty() { None } else { Some(st) };
+            admin_list_posts(st, Some(so)).await
+        }
+    });
+
+    // Clicking a sortable header toggles between its asc/desc variants.
+    let mut toggle_sort = move |asc: &str, desc: &str| {
+        let cur = sort();
+        sort.set(if cur == asc { desc.to_string() } else { asc.to_string() });
+    };
+
     rsx! {
         AdminShell { active: "posts".to_string(),
             div { class: "mb-6 flex items-center justify-between",
                 h1 { class: "text-2xl font-bold", "Posts" }
                 Link { to: Route::AdminPostNew, class: "rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500", "New post" }
+            }
+            div { class: "mb-4 flex items-center gap-3 text-sm",
+                label { class: "text-white/50", "Status" }
+                select {
+                    class: "rounded border border-white/15 bg-transparent px-2 py-1.5",
+                    onchange: move |e| status_filter.set(e.value()),
+                    option { value: "", selected: status_filter().is_empty(), "All" }
+                    for s in ["draft", "published", "archived"] {
+                        option { value: "{s}", selected: status_filter() == s, "{s}" }
+                    }
+                }
+                label { class: "ml-3 text-white/50", "Sort" }
+                select {
+                    class: "rounded border border-white/15 bg-transparent px-2 py-1.5",
+                    onchange: move |e| sort.set(e.value()),
+                    option { value: "recent", selected: sort() == "recent", "Recently updated" }
+                    option { value: "oldest", selected: sort() == "oldest", "Oldest updated" }
+                    option { value: "title", selected: sort() == "title", "Title A–Z" }
+                    option { value: "title_desc", selected: sort() == "title_desc", "Title Z–A" }
+                    option { value: "status", selected: sort() == "status", "Status" }
+                    option { value: "published", selected: sort() == "published", "Published date" }
+                }
             }
             match &*posts.read() {
                 Some(Ok(list)) if !list.is_empty() => {
@@ -151,7 +240,21 @@ pub fn AdminPostList() -> Element {
                     rsx! {
                         table { class: "w-full text-left text-sm",
                             thead { class: "border-b border-white/10 text-white/50",
-                                tr { th { class: "py-2", "Title" } th { "Status" } th { "Published" } th { "" } }
+                                tr {
+                                    th { class: "py-2",
+                                        button { class: "font-medium hover:text-white",
+                                            onclick: move |_| toggle_sort("title", "title_desc"), "Title" }
+                                    }
+                                    th {
+                                        button { class: "font-medium hover:text-white",
+                                            onclick: move |_| toggle_sort("status", "status"), "Status" }
+                                    }
+                                    th {
+                                        button { class: "font-medium hover:text-white",
+                                            onclick: move |_| toggle_sort("published", "published"), "Published" }
+                                    }
+                                    th { "" }
+                                }
                             }
                             tbody {
                                 for p in list {

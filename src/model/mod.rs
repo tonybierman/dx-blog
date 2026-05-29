@@ -128,6 +128,22 @@ wire_struct! {
     }
 }
 
+wire_struct! {
+    /// One referrer source with its visit count, for the analytics page.
+    pub struct ReferrerStat {
+        pub referrer: String,
+        pub views: i64,
+    }
+}
+
+wire_struct! {
+    /// Views recorded on a single day (`YYYY-MM-DD`), for the time-series chart.
+    pub struct DailyViews {
+        pub day: String,
+        pub views: i64,
+    }
+}
+
 /// Raw post fields for the editor (assembled server-side; not a single row
 /// because `tag_ids` comes from a join table).
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Default)]

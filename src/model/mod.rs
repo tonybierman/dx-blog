@@ -16,6 +16,17 @@ macro_rules! wire_struct {
 }
 
 wire_struct! {
+    /// Site-level values used to build `<head>` / Open Graph tags: the display
+    /// title, the tagline (used as the default description), and the canonical
+    /// origin for turning relative paths into the absolute URLs OG requires.
+    pub struct SiteMeta {
+        pub title: String,
+        pub tagline: String,
+        pub base_url: String,
+    }
+}
+
+wire_struct! {
     /// Summary card for feeds/listings.
     pub struct PostCard {
         pub id: i64,

@@ -22,23 +22,93 @@ use crate::Route;
 
 #[component]
 pub fn PostDetail(slug: String) -> Element {
-    let post = use_resource(use_reactive!(|(slug,)| async move { get_post(slug).await }));
-
     rsx! {
         FullBleedLayout {
             div { class: "mx-auto max-w-3xl px-4 py-10",
                 Link { to: Route::HomePage, class: "text-sm text-white/50 hover:underline", "← Back" }
-                match &*post.read() {
-                    Some(Ok(Some(p))) => {
-                        let p = p.clone();
-                        rsx! { PostBody { key: "{p.id}", post: p } }
-                    }
-                    Some(Ok(None)) => rsx! { p { class: "mt-8 text-white/60", "Post not found." } },
-                    Some(Err(e)) => rsx! { p { class: "mt-8 text-red-400", "Error: {e}" } },
-                    None => rsx! { PostDetailSkeleton {} },
+                // The post (and its <head> tags) load inside a suspense boundary so
+                // the skeleton shows during client-side navigation, while the SSR
+                // pass still waits for the data — see `PostContent`.
+                SuspenseBoundary {
+                    fallback: |_| rsx! { PostDetailSkeleton {} },
+                    // Key on slug so navigating between posts remounts the subtree,
+                    // re-firing the view-recording effect and resetting form state.
+                    PostContent { key: "{slug}", slug }
                 }
             }
         }
+    }
+}
+
+/// Loads the post via `use_server_future` (not `use_resource`) so the resolved
+/// article — and its Open Graph / `<head>` tags — are part of the server-rendered
+/// HTML that crawlers and link-unfurlers read. `use_resource` would render the
+/// skeleton during SSR, leaving those tags invisible to anything without JS.
+#[component]
+fn PostContent(slug: String) -> Element {
+    let post = use_server_future(use_reactive!(|(slug,)| async move { get_post(slug).await }))?;
+    let site = use_server_future(crate::server::settings::get_site_meta)?;
+
+    let post = post.read();
+    let post = post.as_ref().unwrap();
+    let base_url = match &*site.read() {
+        Some(Ok(m)) => m.base_url.clone(),
+        _ => String::new(),
+    };
+
+    match post {
+        Ok(Some(p)) => {
+            let p = p.clone();
+            rsx! {
+                PostHead { post: p.clone(), base_url }
+                PostBody { post: p }
+            }
+        }
+        Ok(None) => rsx! { p { class: "mt-8 text-white/60", "Post not found." } },
+        Err(e) => rsx! { p { class: "mt-8 text-red-400", "Error: {e}" } },
+    }
+}
+
+/// Per-post `<head>`: title plus Open Graph / Twitter card tags. Open Graph
+/// wants absolute URLs, so `og:url` and `og:image` are joined onto `base_url`
+/// (the canonical origin from `SITE_URL`); already-absolute image URLs pass
+/// through unchanged.
+#[component]
+fn PostHead(post: crate::model::PostDetail, base_url: String) -> Element {
+    let url = format!("{base_url}/post/{}", post.slug);
+    let image = post.featured_image_url.as_ref().map(|img| {
+        if img.starts_with("http://") || img.starts_with("https://") {
+            img.clone()
+        } else if img.starts_with('/') {
+            format!("{base_url}{img}")
+        } else {
+            format!("{base_url}/{img}")
+        }
+    });
+    let description = post.excerpt.clone();
+
+    rsx! {
+        document::Title { "{post.title}" }
+        document::Meta { name: "description", content: "{description}" }
+        document::Meta { property: "og:type", content: "article" }
+        document::Meta { property: "og:title", content: "{post.title}" }
+        document::Meta { property: "og:description", content: "{description}" }
+        document::Meta { property: "og:url", content: "{url}" }
+        document::Meta { name: "twitter:title", content: "{post.title}" }
+        document::Meta { name: "twitter:description", content: "{description}" }
+        if let Some(img) = image {
+            document::Meta { property: "og:image", content: "{img}" }
+            document::Meta { name: "twitter:image", content: "{img}" }
+        }
+        // Normalize the stored SQLite datetime ("YYYY-MM-DD HH:MM:SS", UTC) to
+        // the ISO 8601 form Open Graph expects.
+        if let Some(when) = post.published_at.as_ref().map(|w| {
+            let t = w.replace(' ', "T");
+            if t.ends_with('Z') || t.contains('+') { t } else { format!("{t}Z") }
+        }) {
+            document::Meta { property: "article:published_time", content: "{when}" }
+        }
+        document::Meta { property: "article:author", content: "{post.author_name}" }
     }
 }
 

@@ -4,7 +4,7 @@
 
 use dioxus::prelude::*;
 
-use crate::model::HomeLayout;
+use crate::model::{HomeLayout, SiteMeta};
 
 #[cfg(feature = "server")]
 use crate::auth_tokens::SETTINGS_WRITE;
@@ -91,6 +91,32 @@ pub async fn get_site_tagline() -> Result<String> {
             .await
             .map_err(sfe)?;
     Ok(stored.map(|s| s.trim().to_string()).unwrap_or_default())
+}
+
+/// Site-level metadata used to build the `<head>` / Open Graph tags: display
+/// title (falls back to [`DEFAULT_SITE_TITLE`]), tagline, and the canonical
+/// origin for absolute URLs (from `SITE_URL`). Public — every page's head reads
+/// it. Bundled into one call so a page resolves all three in a single round trip.
+#[get("/api/site-meta", db: DbExtension)]
+pub async fn get_site_meta() -> Result<SiteMeta> {
+    let title: Option<String> =
+        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'site_title'")
+            .fetch_optional(&db.0)
+            .await
+            .map_err(sfe)?;
+    let tagline: Option<String> =
+        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'site_tagline'")
+            .fetch_optional(&db.0)
+            .await
+            .map_err(sfe)?;
+    Ok(SiteMeta {
+        title: title
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_SITE_TITLE.to_string()),
+        tagline: tagline.map(|s| s.trim().to_string()).unwrap_or_default(),
+        base_url: crate::server::feeds::site_base(),
+    })
 }
 
 /// Set the site tagline (admin only).

@@ -47,7 +47,7 @@ pub fn HomePage() -> Element {
 
     // Each arm wraps the same feed `body` in a different structural shell. Only
     // one arm runs, so moving `body` into several arms is fine.
-    match layout {
+    let content = match layout {
         HomeLayout::HolyGrail => rsx! {
             HolyGrailLayout {
                 left: rsx! {
@@ -156,6 +156,44 @@ pub fn HomePage() -> Element {
                 {body}
             }
         },
+    };
+
+    rsx! {
+        // Home/site-level Open Graph tags, kept in their own suspense boundary so
+        // the feed renders immediately while the (server-resolved) head tags load.
+        SuspenseBoundary { fallback: |_| rsx! {}, HomeMeta {} }
+        {content}
+    }
+}
+
+/// The home page's `<head>`: title and the site-level Open Graph / description
+/// tags. Server-resolved (`use_server_future`) so they appear in the SSR HTML.
+#[component]
+fn HomeMeta() -> Element {
+    let meta = use_server_future(crate::server::settings::get_site_meta)?;
+    let (title, description, url) = match &*meta.read() {
+        Some(Ok(m)) => {
+            let description = if m.tagline.is_empty() {
+                format!("{} — the latest writing from the blog.", m.title)
+            } else {
+                m.tagline.clone()
+            };
+            (m.title.clone(), description, format!("{}/", m.base_url))
+        }
+        _ => (
+            crate::server::settings::DEFAULT_SITE_TITLE.to_string(),
+            String::new(),
+            String::new(),
+        ),
+    };
+
+    rsx! {
+        document::Title { "{title}" }
+        document::Meta { name: "description", content: "{description}" }
+        document::Meta { property: "og:type", content: "website" }
+        document::Meta { property: "og:title", content: "{title}" }
+        document::Meta { property: "og:description", content: "{description}" }
+        document::Meta { property: "og:url", content: "{url}" }
     }
 }
 

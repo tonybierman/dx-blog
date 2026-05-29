@@ -23,7 +23,7 @@ const FEED_LIMIT: i64 = 20;
 
 /// Canonical site origin for absolute URLs, e.g. `https://blog.example.com`.
 /// Reads `SITE_URL` (trailing slash trimmed); falls back to localhost in dev.
-fn site_base() -> String {
+pub fn site_base() -> String {
     std::env::var("SITE_URL")
         .ok()
         .map(|s| s.trim().trim_end_matches('/').to_string())

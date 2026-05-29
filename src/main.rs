@@ -204,6 +204,28 @@ fn main() {
             )
             .route("/feed.xml", axum::routing::get(server::feeds::atom_handler));
 
+        // Permanent redirects from the names people (and feed readers) commonly
+        // guess to the canonical endpoints above — otherwise they fall through to
+        // the SPA catch-all and render the client 404 page. One canonical URL each.
+        let router = {
+            use axum::{response::Redirect, routing::get};
+            router
+                .route(
+                    "/rss.xml",
+                    get(|| async { Redirect::permanent("/feed.xml") }),
+                )
+                .route("/rss", get(|| async { Redirect::permanent("/feed.xml") }))
+                .route("/feed", get(|| async { Redirect::permanent("/feed.xml") }))
+                .route(
+                    "/atom.xml",
+                    get(|| async { Redirect::permanent("/feed.xml") }),
+                )
+                .route(
+                    "/site.xml",
+                    get(|| async { Redirect::permanent("/sitemap.xml") }),
+                )
+        };
+
         arium_dioxus::install(router, cfg).await
     });
 }
@@ -217,6 +239,9 @@ fn App() -> Element {
 
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
+        // Site-wide Open Graph / Twitter card tags. Per-page tags (og:title,
+        // og:description, og:image, og:url) are added by the page components.
+        GlobalMeta {}
         // Atom feed autodiscovery — points readers/browsers at /feed.xml.
         document::Link {
             rel: "alternate",
@@ -256,5 +281,24 @@ fn App() -> Element {
                 }
             }
         }
+    }
+}
+
+/// Site-wide `<head>` tags that don't vary per page: the Open Graph site name
+/// (the configured site title) and the default Twitter card type. Resolved with
+/// `use_server_future` so the tags are part of the server-rendered HTML where
+/// crawlers and link-unfurlers — which don't run JavaScript — can read them.
+/// Page components layer the per-page og:title / og:description / og:image /
+/// og:url on top of these.
+#[component]
+fn GlobalMeta() -> Element {
+    let meta = use_server_future(crate::server::settings::get_site_meta)?;
+    let site_name = match &*meta.read() {
+        Some(Ok(m)) => m.title.clone(),
+        _ => crate::server::settings::DEFAULT_SITE_TITLE.to_string(),
+    };
+    rsx! {
+        document::Meta { property: "og:site_name", content: "{site_name}" }
+        document::Meta { name: "twitter:card", content: "summary_large_image" }
     }
 }

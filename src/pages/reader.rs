@@ -105,7 +105,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                     span { "· {when}" }
                 }
             }
-            div { class: "prose prose-invert mt-8 max-w-none", dangerous_inner_html: "{post.body_html}" }
+            div { class: "prose mt-8 max-w-none", dangerous_inner_html: "{post.body_html}" }
 
             // Author bio
             if let Some(bio) = post.author_bio.clone() {

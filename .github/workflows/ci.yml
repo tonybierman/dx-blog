@@ -79,6 +79,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm
@@ -88,9 +89,15 @@ jobs:
           chmod +x ./tailwindcss
           ./tailwindcss -i tailwind.css -o assets/tailwind.css
       # The browser side compiles for wasm32 without the `server` feature, so a
-      # change can't silently break hydration. Plain check (not -D warnings):
-      # server-only symbols are dead code here, which is expected.
-      - run: cargo check --no-default-features --features web --target wasm32-unknown-unknown
+      # change can't silently break hydration. Clippy (not just `check`) runs here
+      # too so the client half gets the same lint gate the server half does —
+      # previously clippy only covered the server target. `dead_code` is allowed:
+      # server-only symbols compile out on wasm and read as unused, which is
+      # expected (same reason the old step used a plain `check`).
+      - name: Clippy (wasm client)
+        run: |
+          cargo clippy --no-default-features --features web --target wasm32-unknown-unknown \
+            -- -D warnings -A clippy::too_many_arguments -A dead_code
 
   audit:
     name: cargo audit

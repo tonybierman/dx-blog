@@ -11,9 +11,48 @@ use crate::auth_tokens::{
     COMMENTS_MODERATE, MEDIA_UPLOAD, POSTS_WRITE, POSTS_WRITE_ANY, SETTINGS_WRITE,
 };
 #[cfg(feature = "server")]
-use crate::server::{render_markdown, require_perm, sfe, unique_slug, DbExtension};
+use crate::server::{
+    create_with_unique_slug, render_markdown, require_perm, sfe, DbExtension, POST_CARD_COLUMNS,
+    POST_CARD_JOINS,
+};
 
 // ---------------------------------------------------------------- helper
+
+/// Reject a `status` outside the lifecycle whitelist before it reaches the DB.
+/// The `posts` table has a matching `CHECK`, but binding an invalid value would
+/// surface a raw sqlx CHECK error to the client; this returns a friendly one.
+#[cfg(feature = "server")]
+fn validate_status(status: &str) -> std::result::Result<(), ServerFnError> {
+    if crate::model::POST_STATUSES.contains(&status) {
+        Ok(())
+    } else {
+        Err(ServerFnError::new("Invalid status."))
+    }
+}
+
+/// Validate a post's optional `featured_image_url` before it's stored and later
+/// rendered into `<img src>` and `og:image`. Accept only a same-origin relative
+/// path (`/uploads/…`, our upload sink, or any site path) or an absolute http(s)
+/// URL with a real host. This rejects `javascript:`/`data:`/`mailto:` schemes and
+/// scheme-relative `//host` values — closing the residual SSRF-via-unfurler /
+/// off-origin surface even though the value is gated behind `posts:write`.
+#[cfg(feature = "server")]
+fn validate_featured_image(url: &Option<String>) -> std::result::Result<(), ServerFnError> {
+    let Some(u) = url.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(()); // empty / unset — no image, nothing to validate
+    };
+    let same_origin_path = u.starts_with('/') && !u.starts_with("//");
+    let http_url = matches!(u.split_once("://"), Some((scheme, rest))
+        if (scheme == "http" || scheme == "https")
+            && rest.split('/').next().is_some_and(|host| !host.is_empty() && !host.contains([' ', '\t'])));
+    if same_origin_path || http_url {
+        Ok(())
+    } else {
+        Err(ServerFnError::new(
+            "Featured image must be a site path (starting with /) or an http(s) URL.",
+        ))
+    }
+}
 
 /// Edit/delete authorization: Editor+ on the post, OR a global admin token.
 #[cfg(feature = "server")]
@@ -57,32 +96,46 @@ pub async fn create_post(
     status: String,
 ) -> Result<i64> {
     let uid = require_perm(&auth, POSTS_WRITE)?;
-    let slug = unique_slug(&db.0, &title).await.map_err(sfe)?;
+    validate_status(&status)?;
+    validate_featured_image(&featured_image_url)?;
     let body_html = render_markdown(&body_md);
 
-    let post_id: i64 = sqlx::query_scalar(
-        r#"
-        INSERT INTO posts
-          (title, slug, body_md, body_html, excerpt, author_id, category_id,
-           featured_image_url, status, published_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
-           CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)
-        RETURNING id
-        "#,
-    )
-    .bind(&title)
-    .bind(&slug)
-    .bind(&body_md)
-    .bind(&body_html)
-    .bind(&excerpt)
-    .bind(uid)
-    .bind(category_id)
-    .bind(&featured_image_url)
-    .bind(&status)
-    .bind(&status)
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
+    // Resolve+insert with a retry so a concurrent same-title create that grabs the
+    // slug first lands us on the next suffix instead of a raw UNIQUE 500.
+    let pool = &db.0;
+    let (title_ref, body_md_ref, body_html_ref, excerpt_ref, image_ref, status_ref) = (
+        &title,
+        &body_md,
+        &body_html,
+        &excerpt,
+        &featured_image_url,
+        &status,
+    );
+    let post_id: i64 = create_with_unique_slug(pool, "posts", &title, |slug| async move {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            INSERT INTO posts
+              (title, slug, body_md, body_html, excerpt, author_id, category_id,
+               featured_image_url, status, published_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+               CASE WHEN ? = 'published' THEN datetime('now') ELSE NULL END)
+            RETURNING id
+            "#,
+        )
+        .bind(title_ref)
+        .bind(&slug)
+        .bind(body_md_ref)
+        .bind(body_html_ref)
+        .bind(excerpt_ref)
+        .bind(uid)
+        .bind(category_id)
+        .bind(image_ref)
+        .bind(status_ref)
+        .bind(status_ref)
+        .fetch_one(pool)
+        .await
+    })
+    .await?;
 
     set_post_tags(&db.0, post_id, &tag_ids).await?;
 
@@ -116,6 +169,8 @@ pub async fn update_post(
     status: String,
 ) -> Result<()> {
     can_edit_post(&auth, &db.0, &authority, id).await?;
+    validate_status(&status)?;
+    validate_featured_image(&featured_image_url)?;
     let body_html = render_markdown(&body_md);
 
     sqlx::query(
@@ -150,21 +205,27 @@ pub async fn update_post(
 #[post("/api/posts/delete", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn delete_post(id: i64) -> Result<()> {
     require_perm(&auth, POSTS_WRITE_ANY)?;
-    sqlx::query("DELETE FROM post_tags WHERE post_id = ?")
-        .bind(id)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
-    sqlx::query("DELETE FROM comments WHERE post_id = ?")
-        .bind(id)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
-    sqlx::query("DELETE FROM posts WHERE id = ?")
-        .bind(id)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
+    // On a current DB the FK `ON DELETE CASCADE` clauses would clear the child
+    // rows for us, but databases created before those constraints were added rely
+    // on these explicit deletes (see the schema header). Run them in one
+    // transaction so a mid-sequence failure can't leave a post half-deleted with
+    // orphaned tags/comments/views/memberships. (arium_resource_members has no FK
+    // to posts, so its rows are never cascaded — this is their only cleanup.)
+    let mut tx = db.0.begin().await.map_err(sfe)?;
+    for sql in [
+        "DELETE FROM post_tags WHERE post_id = ?",
+        "DELETE FROM comments WHERE post_id = ?",
+        "DELETE FROM post_views WHERE post_id = ?",
+        "DELETE FROM arium_resource_members WHERE kind = 'post' AND resource_id = ?",
+        "DELETE FROM posts WHERE id = ?",
+    ] {
+        sqlx::query(sql)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(sfe)?;
+    }
+    tx.commit().await.map_err(sfe)?;
     Ok(())
 }
 
@@ -190,26 +251,19 @@ pub async fn admin_list_posts(
         Some("title") => "p.title COLLATE NOCASE ASC, p.id DESC",
         Some("title_desc") => "p.title COLLATE NOCASE DESC, p.id DESC",
         Some("status") => "p.status ASC, p.updated_at DESC",
+        Some("status_desc") => "p.status DESC, p.updated_at DESC",
         Some("published") => "p.published_at IS NULL, p.published_at DESC, p.id DESC",
+        // Oldest-published first; unpublished (NULL) still sort last.
+        Some("published_desc") => "p.published_at IS NULL, p.published_at ASC, p.id ASC",
         Some("oldest") => "p.updated_at ASC, p.id ASC",
         // "recent" / None / anything unrecognised
         _ => "p.updated_at DESC, p.id DESC",
     };
 
     let sql = format!(
-        r#"
-        SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
-               p.author_id,
-               COALESCE(u.display_name, u.username) AS author_name,
-               c.name AS category_name,
-               p.status, p.published_at
-        FROM posts p
-        JOIN users u ON u.id = p.author_id
-        LEFT JOIN categories c ON c.id = p.category_id
-        WHERE (? = 1 OR p.author_id = ?)
-          AND (? IS NULL OR p.status = ?)
-        ORDER BY {order_by}
-        "#
+        "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} \
+         WHERE (? = 1 OR p.author_id = ?) AND (? IS NULL OR p.status = ?) \
+         ORDER BY {order_by}"
     );
 
     let rows = sqlx::query_as::<_, PostCard>(&sql)
@@ -300,17 +354,12 @@ pub async fn preview_markdown(md: String) -> Result<String> {
 #[post("/api/admin/comments", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn admin_list_comments(status: Option<String>) -> Result<Vec<CommentView>> {
     require_perm(&auth, COMMENTS_MODERATE)?;
-    let rows = sqlx::query_as::<_, CommentView>(
-        r#"
-        SELECT cm.id, cm.post_id,
-               COALESCE(u.display_name, u.username, cm.guest_name, 'Anonymous') AS display_name,
-               cm.body, cm.status, cm.created_at
-        FROM comments cm
-        LEFT JOIN users u ON u.id = cm.author_id
-        WHERE (? IS NULL OR cm.status = ?)
-        ORDER BY cm.created_at DESC
-        "#,
-    )
+    use crate::server::comments::{COMMENT_VIEW_COLUMNS, COMMENT_VIEW_FROM};
+    let rows = sqlx::query_as::<_, CommentView>(&format!(
+        "SELECT {COMMENT_VIEW_COLUMNS} {COMMENT_VIEW_FROM} \
+         WHERE (? IS NULL OR cm.status = ?) \
+         ORDER BY cm.created_at DESC"
+    ))
     .bind(&status)
     .bind(&status)
     .fetch_all(&db.0)
@@ -322,7 +371,7 @@ pub async fn admin_list_comments(status: Option<String>) -> Result<Vec<CommentVi
 #[post("/api/admin/comments/moderate", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn moderate_comment(id: i64, status: String) -> Result<()> {
     require_perm(&auth, COMMENTS_MODERATE)?;
-    if !["pending", "approved", "rejected"].contains(&status.as_str()) {
+    if !crate::model::COMMENT_STATUSES.contains(&status.as_str()) {
         return Err(ServerFnError::new("Invalid status.").into());
     }
     sqlx::query("UPDATE comments SET status = ? WHERE id = ?")
@@ -350,16 +399,21 @@ pub async fn delete_comment(id: i64) -> Result<()> {
 #[post("/api/admin/categories/create", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn create_category(name: String, description: Option<String>) -> Result<Category> {
     require_perm(&auth, SETTINGS_WRITE)?;
-    let slug = unique_slug_generic(&db.0, "categories", &name).await?;
-    let id: i64 = sqlx::query_scalar(
-        "INSERT INTO categories (name, slug, description) VALUES (?, ?, ?) RETURNING id",
-    )
-    .bind(&name)
-    .bind(&slug)
-    .bind(&description)
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
+    let pool = &db.0;
+    let (name_ref, description_ref) = (&name, &description);
+    let (id, slug): (i64, String) =
+        create_with_unique_slug(pool, "categories", &name, |slug| async move {
+            let id = sqlx::query_scalar::<_, i64>(
+                "INSERT INTO categories (name, slug, description) VALUES (?, ?, ?) RETURNING id",
+            )
+            .bind(name_ref)
+            .bind(&slug)
+            .bind(description_ref)
+            .fetch_one(pool)
+            .await?;
+            Ok((id, slug))
+        })
+        .await?;
     Ok(Category {
         id,
         name,
@@ -371,6 +425,14 @@ pub async fn create_category(name: String, description: Option<String>) -> Resul
 #[post("/api/admin/categories/delete", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn delete_category(id: i64) -> Result<()> {
     require_perm(&auth, SETTINGS_WRITE)?;
+    // Detach posts in this category so their `category_id` doesn't dangle. New
+    // databases get this for free from the FK's ON DELETE SET NULL, but ones
+    // created before that constraint was added rely on this explicit update.
+    sqlx::query("UPDATE posts SET category_id = NULL WHERE category_id = ?")
+        .bind(id)
+        .execute(&db.0)
+        .await
+        .map_err(sfe)?;
     sqlx::query("DELETE FROM categories WHERE id = ?")
         .bind(id)
         .execute(&db.0)
@@ -400,13 +462,20 @@ pub async fn rename_category(id: i64, name: String) -> Result<()> {
 #[post("/api/admin/tags/create", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn create_tag(name: String) -> Result<Tag> {
     require_perm(&auth, SETTINGS_WRITE)?;
-    let slug = unique_slug_generic(&db.0, "tags", &name).await?;
-    let id: i64 = sqlx::query_scalar("INSERT INTO tags (name, slug) VALUES (?, ?) RETURNING id")
-        .bind(&name)
-        .bind(&slug)
-        .fetch_one(&db.0)
-        .await
-        .map_err(sfe)?;
+    let pool = &db.0;
+    let name_ref = &name;
+    let (id, slug): (i64, String) =
+        create_with_unique_slug(pool, "tags", &name, |slug| async move {
+            let id = sqlx::query_scalar::<_, i64>(
+                "INSERT INTO tags (name, slug) VALUES (?, ?) RETURNING id",
+            )
+            .bind(name_ref)
+            .bind(&slug)
+            .fetch_one(pool)
+            .await?;
+            Ok((id, slug))
+        })
+        .await?;
     Ok(Tag { id, name, slug })
 }
 
@@ -444,38 +513,6 @@ pub async fn rename_tag(id: i64, name: String) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "server")]
-async fn unique_slug_generic(
-    pool: &arium_dioxus::pool::Pool,
-    table: &str,
-    name: &str,
-) -> std::result::Result<String, ServerFnError> {
-    let base = {
-        let s = slug::slugify(name);
-        if s.is_empty() {
-            "item".to_string()
-        } else {
-            s
-        }
-    };
-    let mut candidate = base.clone();
-    let mut n = 2;
-    loop {
-        // table is an internal constant ("categories"/"tags"), never user input.
-        let sql = format!("SELECT id FROM {table} WHERE slug = ?");
-        let exists: Option<i64> = sqlx::query_scalar(&sql)
-            .bind(&candidate)
-            .fetch_optional(pool)
-            .await
-            .map_err(sfe)?;
-        if exists.is_none() {
-            return Ok(candidate);
-        }
-        candidate = format!("{base}-{n}");
-        n += 1;
-    }
-}
-
 // ---------------------------------------------------------------- media
 
 #[get("/api/admin/media", auth: arium_dioxus::auth::Session, db: DbExtension)]
@@ -496,9 +533,36 @@ pub async fn upload_media(filename: String, data_base64: String) -> Result<Media
     use base64::{engine::general_purpose::STANDARD, Engine};
 
     let uid = require_perm(&auth, MEDIA_UPLOAD)?;
+
+    // Allow-list raster image extensions only. Uploads are served from the app
+    // origin by ServeDir, which derives Content-Type from the extension — so an
+    // `.html` or scripted `.svg` would be served as live, same-origin content and
+    // execute JS on the site. `accept="image/*"` in the form is a client-side hint
+    // only; this server-side check is the real gate. SVG is intentionally excluded
+    // (it can carry <script>).
+    const ALLOWED_EXT: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "avif"];
+    let ext_ok = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .is_some_and(|e| ALLOWED_EXT.contains(&e.as_str()));
+    if !ext_ok {
+        return Err(ServerFnError::new(
+            "Unsupported file type. Allowed: png, jpg, jpeg, gif, webp, avif.",
+        )
+        .into());
+    }
+
     let bytes = STANDARD
         .decode(data_base64.as_bytes())
         .map_err(|_| ServerFnError::new("Invalid file data."))?;
+
+    // Cap the decoded size (10 MiB) so a holder of the upload token can't fill the
+    // disk with one request.
+    const MAX_BYTES: usize = 10 * 1024 * 1024;
+    if bytes.len() > MAX_BYTES {
+        return Err(ServerFnError::new("File too large (max 10 MB).").into());
+    }
 
     let safe: String = filename
         .chars()
@@ -550,11 +614,42 @@ pub async fn upload_media(filename: String, data_base64: String) -> Result<Media
 
 #[post("/api/admin/media/delete", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn delete_media(id: i64) -> Result<()> {
-    require_perm(&auth, MEDIA_UPLOAD)?;
+    let uid = require_perm(&auth, MEDIA_UPLOAD)?;
+
+    // Grab the stored url + owner first: the url so we can unlink the file after
+    // dropping the row, the owner to enforce that an author may only delete their
+    // own uploads. The MEDIA_UPLOAD token alone would otherwise let any author
+    // delete anyone's media (IDOR within the role); a global admin overrides.
+    let row: Option<(String, i64)> =
+        sqlx::query_as("SELECT url, uploaded_by FROM media WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&db.0)
+            .await
+            .map_err(sfe)?;
+    let Some((url, uploaded_by)) = row else {
+        return Ok(()); // already gone — nothing to do
+    };
+    let is_admin = auth
+        .current_user
+        .as_ref()
+        .map(|u| u.permissions.contains(POSTS_WRITE_ANY))
+        .unwrap_or(false);
+    if uploaded_by != uid && !is_admin {
+        return Err(ServerFnError::new("You can only delete media you uploaded.").into());
+    }
+    let url = Some(url);
+
     sqlx::query("DELETE FROM media WHERE id = ?")
         .bind(id)
         .execute(&db.0)
         .await
         .map_err(sfe)?;
+
+    // Best-effort: remove the file on disk so uploads don't accumulate forever.
+    // The url is `/uploads/<id>_<filename>`; map it back to the on-disk path. A
+    // failure here (already gone, permissions) must not fail the request.
+    if let Some(name) = url.as_deref().and_then(|u| u.strip_prefix("/uploads/")) {
+        let _ = std::fs::remove_file(format!("uploads/{name}"));
+    }
     Ok(())
 }

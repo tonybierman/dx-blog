@@ -11,39 +11,61 @@ use crate::auth_tokens::SETTINGS_WRITE;
 #[cfg(feature = "server")]
 use crate::server::{require_perm, sfe, DbExtension};
 
+/// Read one `site_settings` value by key. Shared by every typed getter below so
+/// the key/value SELECT lives in one place.
+#[cfg(feature = "server")]
+async fn get_setting(
+    db: &arium_dioxus::pool::Pool,
+    key: &str,
+) -> std::result::Result<Option<String>, ServerFnError> {
+    sqlx::query_scalar("SELECT value FROM site_settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(db)
+        .await
+        .map_err(sfe)
+}
+
+/// Upsert one `site_settings` value by key. Shared by every typed setter below.
+#[cfg(feature = "server")]
+async fn set_setting(
+    db: &arium_dioxus::pool::Pool,
+    key: &str,
+    value: &str,
+) -> std::result::Result<(), ServerFnError> {
+    sqlx::query(
+        "INSERT INTO site_settings (key, value) VALUES (?, ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(db)
+    .await
+    .map_err(sfe)?;
+    Ok(())
+}
+
 /// Default accent hue — matches the compiled-in `--brand-hue` in tailwind.css
 /// (≈ sky blue), so an un-themed site and the stylesheet agree.
 pub const DEFAULT_THEME_HUE: i64 = 235;
 
-/// The site's accent hue (oklch hue angle, 0–360). Public — the App root reads
+/// The site's accent hue (oklch hue angle, 0–359). Public — the App root reads
 /// it on every page to inject the `--brand-hue` override.
 #[get("/api/theme", db: DbExtension)]
 pub async fn get_theme_hue() -> Result<i64> {
-    let stored: Option<String> =
-        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'theme_hue'")
-            .fetch_optional(&db.0)
-            .await
-            .map_err(sfe)?;
-    let hue = stored
+    let hue = get_setting(&db.0, "theme_hue")
+        .await?
         .and_then(|s| s.trim().parse::<i64>().ok())
         .map(|h| h.rem_euclid(360))
         .unwrap_or(DEFAULT_THEME_HUE);
     Ok(hue)
 }
 
-/// Set the site's accent hue (admin only). Clamped to 0–360.
+/// Set the site's accent hue (admin only). Normalised to 0–359 via `rem_euclid`.
 #[post("/api/theme/set", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn set_theme_hue(hue: i64) -> Result<()> {
     require_perm(&auth, SETTINGS_WRITE)?;
     let hue = hue.rem_euclid(360);
-    sqlx::query(
-        "INSERT INTO site_settings (key, value) VALUES ('theme_hue', ?)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-    )
-    .bind(hue.to_string())
-    .execute(&db.0)
-    .await
-    .map_err(sfe)?;
+    set_setting(&db.0, "theme_hue", &hue.to_string()).await?;
     Ok(())
 }
 
@@ -54,12 +76,8 @@ pub const DEFAULT_SITE_TITLE: &str = "dx-blog";
 /// reads it on every page. Falls back to [`DEFAULT_SITE_TITLE`] when unset.
 #[get("/api/site-title", db: DbExtension)]
 pub async fn get_site_title() -> Result<String> {
-    let stored: Option<String> =
-        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'site_title'")
-            .fetch_optional(&db.0)
-            .await
-            .map_err(sfe)?;
-    let title = stored
+    let title = get_setting(&db.0, "site_title")
+        .await?
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| DEFAULT_SITE_TITLE.to_string());
@@ -70,14 +88,7 @@ pub async fn get_site_title() -> Result<String> {
 #[post("/api/site-title/set", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn set_site_title(title: String) -> Result<()> {
     require_perm(&auth, SETTINGS_WRITE)?;
-    sqlx::query(
-        "INSERT INTO site_settings (key, value) VALUES ('site_title', ?)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-    )
-    .bind(title.trim())
-    .execute(&db.0)
-    .await
-    .map_err(sfe)?;
+    set_setting(&db.0, "site_title", title.trim()).await?;
     Ok(())
 }
 
@@ -85,12 +96,11 @@ pub async fn set_site_title(title: String) -> Result<()> {
 /// reads it on every page. Empty string when unset.
 #[get("/api/site-tagline", db: DbExtension)]
 pub async fn get_site_tagline() -> Result<String> {
-    let stored: Option<String> =
-        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'site_tagline'")
-            .fetch_optional(&db.0)
-            .await
-            .map_err(sfe)?;
-    Ok(stored.map(|s| s.trim().to_string()).unwrap_or_default())
+    let tagline = get_setting(&db.0, "site_tagline")
+        .await?
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    Ok(tagline)
 }
 
 /// Site-level metadata used to build the `<head>` / Open Graph tags: display
@@ -99,16 +109,8 @@ pub async fn get_site_tagline() -> Result<String> {
 /// it. Bundled into one call so a page resolves all three in a single round trip.
 #[get("/api/site-meta", db: DbExtension)]
 pub async fn get_site_meta() -> Result<SiteMeta> {
-    let title: Option<String> =
-        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'site_title'")
-            .fetch_optional(&db.0)
-            .await
-            .map_err(sfe)?;
-    let tagline: Option<String> =
-        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'site_tagline'")
-            .fetch_optional(&db.0)
-            .await
-            .map_err(sfe)?;
+    let title = get_setting(&db.0, "site_title").await?;
+    let tagline = get_setting(&db.0, "site_tagline").await?;
     Ok(SiteMeta {
         title: title
             .map(|s| s.trim().to_string())
@@ -123,14 +125,7 @@ pub async fn get_site_meta() -> Result<SiteMeta> {
 #[post("/api/site-tagline/set", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn set_site_tagline(tagline: String) -> Result<()> {
     require_perm(&auth, SETTINGS_WRITE)?;
-    sqlx::query(
-        "INSERT INTO site_settings (key, value) VALUES ('site_tagline', ?)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-    )
-    .bind(tagline.trim())
-    .execute(&db.0)
-    .await
-    .map_err(sfe)?;
+    set_setting(&db.0, "site_tagline", tagline.trim()).await?;
     Ok(())
 }
 
@@ -139,12 +134,8 @@ pub async fn set_site_tagline(tagline: String) -> Result<()> {
 /// unset or when an unrecognized key is stored.
 #[get("/api/home-layout", db: DbExtension)]
 pub async fn get_home_layout() -> Result<HomeLayout> {
-    let stored: Option<String> =
-        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'home_layout'")
-            .fetch_optional(&db.0)
-            .await
-            .map_err(sfe)?;
-    let layout = stored
+    let layout = get_setting(&db.0, "home_layout")
+        .await?
         .and_then(|s| HomeLayout::from_key(s.trim()))
         .unwrap_or_default();
     Ok(layout)
@@ -155,13 +146,6 @@ pub async fn get_home_layout() -> Result<HomeLayout> {
 #[post("/api/home-layout/set", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn set_home_layout(layout: HomeLayout) -> Result<()> {
     require_perm(&auth, SETTINGS_WRITE)?;
-    sqlx::query(
-        "INSERT INTO site_settings (key, value) VALUES ('home_layout', ?)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-    )
-    .bind(layout.as_key())
-    .execute(&db.0)
-    .await
-    .map_err(sfe)?;
+    set_setting(&db.0, "home_layout", layout.as_key()).await?;
     Ok(())
 }

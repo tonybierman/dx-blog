@@ -8,7 +8,7 @@ use arium_dioxus::ResourceRole;
 
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
 use crate::pages::widgets::{
-    CategoryList, FeedGrid, FeedSkeleton, PaginationBar, PostCardView, TagList,
+    feed_states, CategoryList, FeedBody, FeedShape, FeedSkeleton, TagList,
 };
 use crate::server::authors::get_author_profile;
 use crate::server::comments::{create_comment, list_comments};
@@ -89,23 +89,27 @@ fn PostHead(post: crate::model::PostDetail, base_url: String) -> Element {
 
     rsx! {
         document::Title { "{post.title}" }
-        document::Meta { name: "description", content: "{description}" }
         document::Meta { property: "og:type", content: "article" }
         document::Meta { property: "og:title", content: "{post.title}" }
-        document::Meta { property: "og:description", content: "{description}" }
-        document::Meta { property: "og:url", content: "{url}" }
         document::Meta { name: "twitter:title", content: "{post.title}" }
-        document::Meta { name: "twitter:description", content: "{description}" }
+        // Guard the description/url tags: a post may have no excerpt, and `url`
+        // is only meaningful when SITE_URL resolved (else `base_url` is empty and
+        // `og:url` would be a bare relative path). Same treatment as `og:image`.
+        if !description.is_empty() {
+            document::Meta { name: "description", content: "{description}" }
+            document::Meta { property: "og:description", content: "{description}" }
+            document::Meta { name: "twitter:description", content: "{description}" }
+        }
+        if !base_url.is_empty() {
+            document::Meta { property: "og:url", content: "{url}" }
+        }
         if let Some(img) = image {
             document::Meta { property: "og:image", content: "{img}" }
             document::Meta { name: "twitter:image", content: "{img}" }
         }
         // Normalize the stored SQLite datetime ("YYYY-MM-DD HH:MM:SS", UTC) to
-        // the ISO 8601 form Open Graph expects.
-        if let Some(when) = post.published_at.as_ref().map(|w| {
-            let t = w.replace(' ', "T");
-            if t.ends_with('Z') || t.contains('+') { t } else { format!("{t}Z") }
-        }) {
+        // the ISO 8601 form Open Graph expects (shared with the feed/sitemap).
+        if let Some(when) = post.published_at.as_ref().map(|w| crate::model::to_rfc3339(w)) {
             document::Meta { property: "article:published_time", content: "{when}" }
         }
         document::Meta { property: "article:author", content: "{post.author_name}" }
@@ -141,7 +145,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
         });
     });
 
-    let is_draft = post.status != "published";
+    let is_draft = post.status != crate::model::STATUS_PUBLISHED;
 
     rsx! {
         article {
@@ -199,21 +203,32 @@ fn CommentSection(post_id: i64) -> Element {
     let mut name = use_signal(String::new);
     let mut email = use_signal(String::new);
     let mut status = use_signal(String::new);
+    // Guards against a double-submit while the request is in flight.
+    let mut submitting = use_signal(|| false);
 
     let submit = move |_| {
+        if submitting() {
+            return;
+        }
         let b = body();
         let (n, e) = (name(), email());
+        submitting.set(true);
         spawn(async move {
             let gname = if n.is_empty() { None } else { Some(n) };
             let gemail = if e.is_empty() { None } else { Some(e) };
             match create_comment(post_id, b, gname, gemail).await {
                 Ok(()) => {
+                    // Clear the whole form, not just the body, so a guest doesn't
+                    // resubmit their name/email by accident.
                     body.set(String::new());
+                    name.set(String::new());
+                    email.set(String::new());
                     status.set("Thanks! Your comment is awaiting approval.".into());
                     comments.restart();
                 }
                 Err(err) => status.set(arium_dioxus::friendly_server_error(err)),
             }
+            submitting.set(false);
         });
     };
 
@@ -262,9 +277,10 @@ fn CommentSection(post_id: i64) -> Element {
                     oninput: move |e| body.set(e.value()),
                 }
                 button {
-                    class: "rounded bg-brand-600 px-4 py-1.5 text-sm font-medium hover:bg-brand-500",
+                    class: "rounded bg-brand-600 px-4 py-1.5 text-sm font-medium hover:bg-brand-500 disabled:opacity-50",
+                    disabled: submitting(),
                     onclick: submit,
-                    "Post comment"
+                    if submitting() { "Posting…" } else { "Post comment" }
                 }
                 if !status().is_empty() {
                     p { class: "text-sm text-white/60", "{status}" }
@@ -280,24 +296,28 @@ fn CommentSection(post_id: i64) -> Element {
 #[component]
 fn PaginatedFeed(category_slug: Option<String>, tag_slug: Option<String>) -> Element {
     let mut page = use_signal(|| 1i64);
+    // This component is reused (not remounted) when the route param changes, so
+    // the page signal would otherwise carry over — land on page 3 of one feed,
+    // switch feeds, and you'd be stuck on a page 3 that may not exist. Reset to 1
+    // whenever the filter changes.
+    use_effect({
+        let (category_slug, tag_slug) = (category_slug.clone(), tag_slug.clone());
+        use_reactive!(|(category_slug, tag_slug)| {
+            let _ = (&category_slug, &tag_slug);
+            page.set(1);
+        })
+    });
     let posts = use_resource(use_reactive!(|(category_slug, tag_slug)| async move {
         list_posts(page(), category_slug, tag_slug).await
     }));
 
-    rsx! {
-        match &*posts.read() {
-            Some(Ok(feed)) => {
-                let cards = feed.items.clone();
-                let total_pages = feed.total_pages();
-                rsx! {
-                    FeedGrid { cards }
-                    PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
-                }
-            }
-            Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
-            None => rsx! { FeedSkeleton {} },
+    feed_states!(posts, feed => {
+        let cards = feed.items.clone();
+        let total_pages = feed.total_pages();
+        rsx! {
+            FeedBody { shape: FeedShape::Grid, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
         }
-    }
+    })
 }
 
 #[component]
@@ -333,6 +353,15 @@ pub fn TagFeed(slug: String) -> Element {
         _ => slug.clone(),
     };
     let mut page = use_signal(|| 1i64);
+    // Reset pagination when the tag changes (the component is reused across
+    // route-param changes, so the page signal would otherwise persist).
+    use_effect({
+        let slug = slug.clone();
+        use_reactive!(|(slug,)| {
+            let _ = slug;
+            page.set(1);
+        })
+    });
     let posts = {
         let slug = slug.clone();
         use_resource(use_reactive!(|(slug,)| async move {
@@ -346,26 +375,13 @@ pub fn TagFeed(slug: String) -> Element {
                 h1 { class: "text-2xl font-bold", "#{title}" }
                 TagList {}
             },
-            match &*posts.read() {
-                Some(Ok(feed)) => {
-                    let total_pages = feed.total_pages();
-                    rsx! {
-                        for (i, card) in feed.items.clone().into_iter().enumerate() {
-                            div {
-                                key: "{card.id}",
-                                class: if i == 0 { "col-span-2 row-span-2" } else { "" },
-                                PostCardView { card }
-                            }
-                        }
-                        // Span the full bento row so the pager sits below the tiles.
-                        div { style: "grid-column: 1 / -1;",
-                            PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
-                        }
-                    }
+            {feed_states!(posts, feed => {
+                let cards = feed.items.clone();
+                let total_pages = feed.total_pages();
+                rsx! {
+                    FeedBody { shape: FeedShape::Bento, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
                 }
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
-                None => rsx! { FeedSkeleton {} },
-            }
+            })}
         }
     }
 }
@@ -379,6 +395,14 @@ pub fn AuthorProfile(slug: String) -> Element {
         }))
     };
     let mut page = use_signal(|| 1i64);
+    // Reset pagination when navigating to a different author (reused component).
+    use_effect({
+        let slug = slug.clone();
+        use_reactive!(|(slug,)| {
+            let _ = slug;
+            page.set(1);
+        })
+    });
     let posts = {
         let slug = slug.clone();
         use_resource(use_reactive!(|(slug,)| async move {
@@ -409,18 +433,13 @@ pub fn AuthorProfile(slug: String) -> Element {
         HolyGrailLayout {
             left: sidebar,
             h1 { class: "mb-6 text-2xl font-bold", "Posts" }
-            match &*posts.read() {
-                Some(Ok(feed)) => {
-                    let cards = feed.items.clone();
-                    let total_pages = feed.total_pages();
-                    rsx! {
-                        FeedGrid { cards }
-                        PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
-                    }
+            {feed_states!(posts, feed => {
+                let cards = feed.items.clone();
+                let total_pages = feed.total_pages();
+                rsx! {
+                    FeedBody { shape: FeedShape::Grid, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
                 }
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
-                None => rsx! { FeedSkeleton {} },
-            }
+            })}
         }
     }
 }
@@ -432,25 +451,13 @@ pub fn Archive() -> Element {
     rsx! {
         MasonryLayout {
             h1 { class: "mb-6 text-2xl font-bold", "Archive" }
-            match &*posts.read() {
-                Some(Ok(feed)) => {
-                    let total_pages = feed.total_pages();
-                    rsx! {
-                        for card in feed.items.clone() {
-                            div { key: "{card.id}", class: "mb-4 inline-block w-full break-inside-avoid",
-                                PostCardView { card }
-                            }
-                        }
-                        // `column-span: all` lifts the pager out of the
-                        // CSS-columns flow so it spans the full masonry width.
-                        div { style: "column-span: all;",
-                            PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
-                        }
-                    }
+            {feed_states!(posts, feed => {
+                let cards = feed.items.clone();
+                let total_pages = feed.total_pages();
+                rsx! {
+                    FeedBody { shape: FeedShape::Masonry, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
                 }
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
-                None => rsx! { FeedSkeleton {} },
-            }
+            })}
         }
     }
 }
@@ -459,6 +466,14 @@ pub fn Archive() -> Element {
 pub fn SearchResults(q: String) -> Element {
     let mut query = use_signal(|| q.clone());
     let mut page = use_signal(|| 1i64);
+    // The query signal seeds from `?q=` at mount only; this page is reused when
+    // the route param changes (e.g. a second search from the header), so without
+    // this the input would keep showing the old term. Re-sync on every change and
+    // reset pagination.
+    use_effect(use_reactive!(|(q,)| {
+        query.set(q);
+        page.set(1);
+    }));
     // Facet state — category/tag slugs ("" = any) and a date bucket.
     let mut category = use_signal(String::new);
     let mut tag = use_signal(String::new);
@@ -539,19 +554,15 @@ pub fn SearchResults(q: String) -> Element {
                 value: "{query}",
                 oninput: move |e| { query.set(e.value()); page.set(1); },
             }
-            match &*results.read() {
-                Some(Ok(feed)) => {
-                    let cards = feed.items.clone();
-                    let total_pages = feed.total_pages();
-                    rsx! {
-                        p { class: "mb-4 text-sm text-white/50", "{feed.total} result(s)" }
-                        FeedGrid { cards }
-                        PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
-                    }
+            {feed_states!(results, feed => {
+                let cards = feed.items.clone();
+                let total = feed.total;
+                let total_pages = feed.total_pages();
+                rsx! {
+                    p { class: "mb-4 text-sm text-white/50", "{total} result(s)" }
+                    FeedBody { shape: FeedShape::Grid, cards, page: page(), total_pages, on_change: move |p| page.set(p) }
                 }
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
-                None => rsx! { FeedSkeleton {} },
-            }
+            })}
         }
     }
 }

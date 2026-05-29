@@ -8,28 +8,51 @@
 
 use crate::server::{render_markdown, unique_slug};
 use arium_dioxus::pool::Pool;
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::str::FromStr;
 
 /// A one-connection in-memory pool with the blog schema applied. `max_connections(1)`
 /// keeps every query on the same `:memory:` database (separate connections would
 /// each get their own empty one).
+///
+/// Foreign keys are turned ON to match production (`main.rs`), so the schema's
+/// `REFERENCES … ON DELETE` clauses are actually exercised. The blog schema
+/// references arium's `users` table, which these tests don't run arium's migrator
+/// for, so we stand up a minimal `users(id)` parent first and seed the author ids
+/// the fixtures attribute rows to.
 async fn test_pool() -> Pool {
+    let opts = SqliteConnectOptions::from_str("sqlite::memory:")
+        .expect("parse in-memory url")
+        .foreign_keys(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect("sqlite::memory:")
+        .connect_with(opts)
         .await
         .expect("open in-memory sqlite");
+    // Stand-in for arium's `users` table — only `id` is referenced by the blog
+    // schema's FKs. Created before the blog schema so those REFERENCES resolve.
+    sqlx::query("CREATE TABLE users (id INTEGER PRIMARY KEY)")
+        .execute(&pool)
+        .await
+        .expect("create users stub");
     sqlx::raw_sql(include_str!("../../migrations/0001_blog.sql"))
         .execute(&pool)
         .await
         .expect("apply blog schema");
+    // Author rows the fixtures attribute posts/comments to.
+    for id in [1_i64, 2] {
+        sqlx::query("INSERT INTO users (id) VALUES (?)")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("seed user");
+    }
     pool
 }
 
-/// Insert a minimal post row (enough columns to satisfy NOT NULLs). Returns id.
+/// Insert a minimal post row (enough columns to satisfy NOT NULLs), attributed
+/// to seeded user 1. Returns nothing; the first post inserted has id 1.
 async fn insert_post(pool: &Pool, title: &str, slug: &str) {
-    // author_id references arium's users in production, but there's no FK in the
-    // blog schema, so a bare id is fine for these unit tests.
     sqlx::query("INSERT INTO posts (title, slug, author_id) VALUES (?, ?, 1)")
         .bind(title)
         .bind(slug)
@@ -73,12 +96,47 @@ fn render_markdown_drops_onclick_attributes() {
     );
 }
 
+// ---------------------------------------------------------------- email sanity check
+
+#[test]
+fn looks_like_email_accepts_and_rejects() {
+    use crate::server::looks_like_email;
+    assert!(looks_like_email("a@b.com"));
+    assert!(looks_like_email("first.last@sub.example.co"));
+    // The junk the old `contains('@') && len >= 3` guard let through:
+    assert!(!looks_like_email("a@b"), "needs a dotted domain");
+    assert!(!looks_like_email("@x.com"), "empty local part");
+    assert!(!looks_like_email("a@@b.com"), "double @");
+    assert!(!looks_like_email("nope"), "no @");
+    assert!(!looks_like_email("a@.com"), "empty domain label");
+}
+
+// ---------------------------------------------------------------- pagination + date helpers
+
+#[test]
+fn page_offset_clamps_and_computes() {
+    use crate::model::{page_offset, PER_PAGE};
+    assert_eq!(page_offset(0), (1, 0), "page < 1 clamps to 1");
+    assert_eq!(page_offset(-5), (1, 0));
+    assert_eq!(page_offset(1), (1, 0));
+    assert_eq!(page_offset(3), (3, 2 * PER_PAGE));
+}
+
+#[test]
+fn to_rfc3339_normalizes_sqlite_datetime() {
+    use crate::model::to_rfc3339;
+    assert_eq!(to_rfc3339("2024-01-02 03:04:05"), "2024-01-02T03:04:05Z");
+    // Already ISO 8601 — passed through unchanged.
+    assert_eq!(to_rfc3339("2024-01-02T03:04:05Z"), "2024-01-02T03:04:05Z");
+    assert_eq!(to_rfc3339(""), "");
+}
+
 // ---------------------------------------------------------------- slug uniqueness
 
 #[tokio::test]
 async fn unique_slug_is_stable_when_free() {
     let pool = test_pool().await;
-    let slug = unique_slug(&pool, "Hello World").await.unwrap();
+    let slug = unique_slug(&pool, "posts", "Hello World").await.unwrap();
     assert_eq!(slug, "hello-world");
 }
 
@@ -86,20 +144,20 @@ async fn unique_slug_is_stable_when_free() {
 async fn unique_slug_appends_suffix_on_collision() {
     let pool = test_pool().await;
     insert_post(&pool, "Hello World", "hello-world").await;
-    let slug = unique_slug(&pool, "Hello World").await.unwrap();
+    let slug = unique_slug(&pool, "posts", "Hello World").await.unwrap();
     assert_eq!(slug, "hello-world-2");
 
     // A second collision bumps to -3.
     insert_post(&pool, "Hello World 2", "hello-world-2").await;
-    let slug = unique_slug(&pool, "Hello World").await.unwrap();
+    let slug = unique_slug(&pool, "posts", "Hello World").await.unwrap();
     assert_eq!(slug, "hello-world-3");
 }
 
 #[tokio::test]
 async fn unique_slug_falls_back_for_empty_title() {
     let pool = test_pool().await;
-    let slug = unique_slug(&pool, "!!!").await.unwrap();
-    assert_eq!(slug, "post");
+    let slug = unique_slug(&pool, "posts", "!!!").await.unwrap();
+    assert_eq!(slug, "item");
 }
 
 // ---------------------------------------------------------------- comment auto-approve
@@ -120,6 +178,8 @@ async fn has_prior_approved(pool: &Pool, author_id: i64) -> bool {
 #[tokio::test]
 async fn returning_approved_commenter_is_recognized() {
     let pool = test_pool().await;
+    // A post for the comments to hang off (FKs are enforced now). First insert → id 1.
+    insert_post(&pool, "Post", "post").await;
     // Author 1 already has an approved comment; author 2 only a pending one.
     sqlx::query(
         "INSERT INTO comments (post_id, author_id, body, status) VALUES (1, 1, 'hi', 'approved')",
@@ -146,4 +206,37 @@ async fn returning_approved_commenter_is_recognized() {
         !has_prior_approved(&pool, 99).await,
         "unknown author stays pending"
     );
+}
+
+// ---------------------------------------------------------------- FK cascade
+
+/// With foreign keys enabled, deleting a post should cascade to its dependent
+/// rows (here: comments via `ON DELETE CASCADE`). This exercises the schema
+/// constraint that `delete_post`'s hand-rolled deletes are only a fallback for.
+#[tokio::test]
+async fn deleting_post_cascades_to_comments() {
+    let pool = test_pool().await;
+    insert_post(&pool, "Post", "post").await; // id 1
+    sqlx::query(
+        "INSERT INTO comments (post_id, author_id, body, status) VALUES (1, 1, 'hi', 'approved')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM comments")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(before, 1, "comment should be inserted");
+
+    sqlx::query("DELETE FROM posts WHERE id = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM comments")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(after, 0, "deleting the post should cascade to its comments");
 }

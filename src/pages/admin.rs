@@ -4,14 +4,15 @@
 
 use dioxus::prelude::*;
 use dioxus_sdk_time::use_debounce;
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
 use arium_dioxus::ui::{Policy, RequirePermission};
 
-use crate::auth_tokens::{
-    ANALYTICS_READ, COMMENTS_MODERATE, POSTS_WRITE, POSTS_WRITE_ANY, SETTINGS_WRITE, USERS_MANAGE,
-};
-use crate::model::{AnalyticsSummary, HomeLayout, PostEditData};
+use crate::auth_tokens::ADMIN_NAV_TOKENS;
+use crate::model::{AnalyticsSummary, HomeLayout, PostEditData, POST_STATUSES, STATUS_DRAFT};
+use crate::pages::widgets::list_states;
 use crate::server::admin::*;
 use crate::server::analytics::{analytics_summary, top_posts, top_referrers, views_over_time};
 use crate::server::settings::{
@@ -22,14 +23,25 @@ use crate::server::taxonomy::{list_categories, list_tags};
 use crate::Route;
 
 fn admin_any_policy() -> Policy {
-    Policy::any_of([
-        POSTS_WRITE,
-        POSTS_WRITE_ANY,
-        COMMENTS_MODERATE,
-        USERS_MANAGE,
-        SETTINGS_WRITE,
-        ANALYTICS_READ,
-    ])
+    Policy::any_of(ADMIN_NAV_TOKENS)
+}
+
+/// Run a fire-and-forget save and report its outcome into a status signal:
+/// `ok_msg` on success, the friendly server error on failure. Collapses the
+/// `spawn { match fut.await { Ok => set(ok), Err => set(friendly) } }` block the
+/// settings savers all repeated (the two `ThemeSelector` savers were identical).
+fn save_with_status(
+    fut: impl Future<Output = Result<()>> + 'static,
+    mut status: Signal<String>,
+    ok_msg: impl Into<String>,
+) {
+    let ok_msg = ok_msg.into();
+    spawn(async move {
+        match fut.await {
+            Ok(()) => status.set(ok_msg),
+            Err(e) => status.set(arium_dioxus::friendly_server_error(e)),
+        }
+    });
 }
 
 fn nav_class(active: &str, name: &str) -> &'static str {
@@ -228,7 +240,7 @@ pub fn AdminPostList() -> Element {
                     class: "rounded border border-white/15 bg-transparent px-2 py-1.5",
                     onchange: move |e| status_filter.set(e.value()),
                     option { value: "", selected: status_filter().is_empty(), "All" }
-                    for s in ["draft", "published", "archived"] {
+                    for s in POST_STATUSES {
                         option { value: "{s}", selected: status_filter() == s, "{s}" }
                     }
                 }
@@ -244,10 +256,7 @@ pub fn AdminPostList() -> Element {
                     option { value: "published", selected: sort() == "published", "Published date" }
                 }
             }
-            match &*posts.read() {
-                Some(Ok(list)) if !list.is_empty() => {
-                    let list = list.clone();
-                    rsx! {
+            {list_states!(posts, empty: "No posts yet.", list => rsx! {
                         table { class: "w-full text-left text-sm",
                             thead { class: "border-b border-white/10 text-white/50",
                                 tr {
@@ -257,11 +266,11 @@ pub fn AdminPostList() -> Element {
                                     }
                                     th {
                                         button { class: "font-medium hover:text-white",
-                                            onclick: move |_| toggle_sort("status", "status"), "Status" }
+                                            onclick: move |_| toggle_sort("status", "status_desc"), "Status" }
                                     }
                                     th {
                                         button { class: "font-medium hover:text-white",
-                                            onclick: move |_| toggle_sort("published", "published"), "Published" }
+                                            onclick: move |_| toggle_sort("published", "published_desc"), "Published" }
                                     }
                                     th { "" }
                                 }
@@ -274,35 +283,67 @@ pub fn AdminPostList() -> Element {
                                         td { class: "text-white/50", {p.published_at.clone().unwrap_or_else(|| "—".into())} }
                                         td { class: "flex gap-3 py-2",
                                             Link { to: Route::AdminPostEdit { id: p.id }, class: "text-brand-400 hover:underline", "Edit" }
-                                            DeletePostButton { id: p.id, on_deleted: move |_| posts.restart() }
+                                            {
+                                                let pid = p.id;
+                                                rsx! {
+                                                    ActionButton {
+                                                        label: "Delete".to_string(),
+                                                        class: "text-red-400 hover:underline".to_string(),
+                                                        on_done: move |_| posts.restart(),
+                                                        action: move |_| Box::pin(async move { delete_post(pid).await }) as ActionFuture,
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                }
-                Some(Ok(_)) => rsx! { p { class: "text-white/50", "No posts yet." } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
-            }
+            })}
         }
     }
 }
 
+/// The future an [`ActionButton`]'s `action` resolves to. Boxed so a single prop
+/// type can carry any server-fn call.
+type ActionFuture = Pin<Box<dyn Future<Output = Result<()>>>>;
+
+/// One button for a fire-and-refetch admin mutation. Collapses the repeated
+/// `spawn → server_fn → refetch` boilerplate (and its silent error swallowing)
+/// that lived in five near-identical button components and two inline closures:
+/// it runs `action`, calls `on_done` on success, shows the error inline on
+/// failure, and blocks a double-click while the request is in flight.
 #[component]
-fn DeletePostButton(id: i64, on_deleted: EventHandler<()>) -> Element {
+fn ActionButton(
+    label: String,
+    #[props(default = "text-brand-400 hover:underline".to_string())] class: String,
+    on_done: EventHandler<()>,
+    action: Callback<(), ActionFuture>,
+) -> Element {
+    let mut busy = use_signal(|| false);
+    let mut err = use_signal(String::new);
     rsx! {
         button {
-            class: "text-red-400 hover:underline",
+            class: "{class} disabled:opacity-50",
+            disabled: busy(),
             onclick: move |_| {
+                if busy() {
+                    return;
+                }
+                busy.set(true);
+                err.set(String::new());
                 spawn(async move {
-                    if delete_post(id).await.is_ok() {
-                        on_deleted.call(());
+                    match action.call(()).await {
+                        Ok(()) => on_done.call(()),
+                        Err(e) => err.set(arium_dioxus::friendly_server_error(e)),
                     }
+                    busy.set(false);
                 });
             },
-            "Delete"
+            "{label}"
+        }
+        if !err().is_empty() {
+            span { class: "ml-2 text-xs text-red-400", "{err}" }
         }
     }
 }
@@ -313,7 +354,7 @@ fn DeletePostButton(id: i64, on_deleted: EventHandler<()>) -> Element {
 pub fn AdminPostNew() -> Element {
     rsx! {
         AdminShell { active: "new".to_string(),
-            EditorForm { initial: PostEditData { status: "draft".to_string(), ..Default::default() } }
+            EditorForm { initial: PostEditData { status: STATUS_DRAFT.to_string(), ..Default::default() } }
         }
     }
 }
@@ -341,6 +382,14 @@ fn EditorForm(initial: PostEditData) -> Element {
     let mut excerpt = use_signal(|| initial.excerpt.clone());
     let mut body = use_signal(|| initial.body_md.clone());
     let mut featured = use_signal(|| initial.featured_image_url.clone().unwrap_or_default());
+    // The featured-image thumbnail keys off a debounced copy of `featured` so it
+    // doesn't fire an image request (and flash a broken icon) on every keystroke
+    // while a URL is being typed — same pattern as the markdown preview below.
+    let mut featured_preview =
+        use_signal(|| initial.featured_image_url.clone().unwrap_or_default());
+    let mut debounce_featured = use_debounce(Duration::from_millis(400), move |v: String| {
+        featured_preview.set(v)
+    });
     let mut category_id = use_signal(|| initial.category_id);
     let mut status = use_signal(|| initial.status.clone());
     let mut selected_tags = use_signal(|| initial.tag_ids.clone());
@@ -412,7 +461,11 @@ fn EditorForm(initial: PostEditData) -> Element {
                             class: "flex-1 rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
                             placeholder: "Featured image URL",
                             value: "{featured}",
-                            oninput: move |e| featured.set(e.value()),
+                            oninput: move |e| {
+                                let v = e.value();
+                                featured.set(v.clone());
+                                debounce_featured.action(v);
+                            },
                         }
                         button {
                             r#type: "button",
@@ -421,8 +474,8 @@ fn EditorForm(initial: PostEditData) -> Element {
                             if show_media_picker() { "Close" } else { "Library" }
                         }
                     }
-                    if !featured().trim().is_empty() {
-                        img { class: "h-24 rounded border border-white/10 object-cover", src: "{featured}", alt: "Featured preview" }
+                    if !featured_preview().trim().is_empty() {
+                        img { class: "h-24 rounded border border-white/10 object-cover", src: "{featured_preview}", alt: "Featured preview" }
                     }
                     if show_media_picker() {
                         div { class: "rounded border border-white/10 bg-white/[0.03] p-2",
@@ -438,7 +491,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                                                         r#type: "button",
                                                         class: "overflow-hidden rounded border border-white/10 hover:border-brand-400",
                                                         title: "{m.filename}",
-                                                        onclick: move |_| { featured.set(url.clone()); show_media_picker.set(false); },
+                                                        onclick: move |_| { featured.set(url.clone()); featured_preview.set(url.clone()); show_media_picker.set(false); },
                                                         img { class: "h-16 w-full object-cover", src: "{m.url}", alt: "{m.filename}" }
                                                     }
                                                 }
@@ -467,7 +520,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                     select {
                         class: "rounded border border-white/15 bg-transparent px-2 py-1.5 text-sm",
                         onchange: move |e| status.set(e.value()),
-                        for s in ["draft", "published", "archived"] {
+                        for s in POST_STATUSES {
                             option { value: "{s}", selected: status() == s, "{s}" }
                         }
                     }
@@ -534,10 +587,7 @@ pub fn AdminComments() -> Element {
     rsx! {
         AdminShell { active: "comments".to_string(),
             h1 { class: "mb-6 text-2xl font-bold", "Comment moderation" }
-            match &*comments.read() {
-                Some(Ok(list)) if !list.is_empty() => {
-                    let list = list.clone();
-                    rsx! {
+            {list_states!(comments, empty: "No comments.", list => rsx! {
                         div { class: "space-y-3",
                             for c in list {
                                 div { key: "{c.id}", class: "rounded-lg border border-white/10 p-3",
@@ -547,50 +597,32 @@ pub fn AdminComments() -> Element {
                                     }
                                     p { class: "mt-1 text-sm text-white/80", "{c.body}" }
                                     div { class: "mt-2 flex gap-3 text-xs",
-                                        ModButton { id: c.id, action: "approved", label: "Approve", on_done: move |_| comments.restart() }
-                                        ModButton { id: c.id, action: "rejected", label: "Reject", on_done: move |_| comments.restart() }
-                                        DeleteCommentButton { id: c.id, on_done: move |_| comments.restart() }
+                                        {
+                                            let cid = c.id;
+                                            rsx! {
+                                                ActionButton {
+                                                    label: "Approve".to_string(),
+                                                    on_done: move |_| comments.restart(),
+                                                    action: move |_| Box::pin(async move { moderate_comment(cid, "approved".to_string()).await }) as ActionFuture,
+                                                }
+                                                ActionButton {
+                                                    label: "Reject".to_string(),
+                                                    on_done: move |_| comments.restart(),
+                                                    action: move |_| Box::pin(async move { moderate_comment(cid, "rejected".to_string()).await }) as ActionFuture,
+                                                }
+                                                ActionButton {
+                                                    label: "Delete".to_string(),
+                                                    class: "text-red-400 hover:underline".to_string(),
+                                                    on_done: move |_| comments.restart(),
+                                                    action: move |_| Box::pin(async move { delete_comment(cid).await }) as ActionFuture,
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                }
-                Some(Ok(_)) => rsx! { p { class: "text-white/50", "No comments." } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
-            }
-        }
-    }
-}
-
-#[component]
-fn ModButton(id: i64, action: String, label: String, on_done: EventHandler<()>) -> Element {
-    rsx! {
-        button {
-            class: "text-brand-400 hover:underline",
-            onclick: move |_| {
-                let action = action.clone();
-                spawn(async move {
-                    if moderate_comment(id, action).await.is_ok() { on_done.call(()); }
-                });
-            },
-            "{label}"
-        }
-    }
-}
-
-#[component]
-fn DeleteCommentButton(id: i64, on_done: EventHandler<()>) -> Element {
-    rsx! {
-        button {
-            class: "text-red-400 hover:underline",
-            onclick: move |_| {
-                spawn(async move {
-                    if delete_comment(id).await.is_ok() { on_done.call(()); }
-                });
-            },
-            "Delete"
+            })}
         }
     }
 }
@@ -612,11 +644,15 @@ pub fn AdminMedia() -> Element {
                 else {
                     const r = new FileReader();
                     r.onload = () => { dioxus.send(f.name + '|' + r.result.split(',')[1]); };
+                    // Without an onerror, a read failure leaves recv() awaiting a
+                    // message that never arrives — the await would hang forever.
+                    r.onerror = () => { dioxus.send('__read_error__'); };
                     r.readAsDataURL(f);
                 }
                 "#,
             );
             match eval.recv::<String>().await {
+                Ok(s) if s == "__read_error__" => msg.set("Could not read file.".into()),
                 Ok(s) if !s.is_empty() => {
                     if let Some((name, b64)) = s.split_once('|') {
                         match upload_media(name.to_string(), b64.to_string()).await {
@@ -642,10 +678,9 @@ pub fn AdminMedia() -> Element {
                 button { class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", onclick: upload, "Upload" }
                 if !msg().is_empty() { span { class: "text-sm text-white/60", "{msg}" } }
             }
-            match &*media.read() {
-                Some(Ok(list)) if !list.is_empty() => rsx! {
+            {list_states!(media, empty: "No media yet.", list => rsx! {
                     div { class: "columns-2 gap-4 md:columns-3 lg:columns-4",
-                        for m in list.clone() {
+                        for m in list {
                             div { key: "{m.id}", class: "mb-4 inline-block w-full break-inside-avoid rounded-lg border border-white/10 p-2",
                                 img { class: "w-full rounded", src: "{m.url}", alt: "{m.filename}" }
                                 div { class: "mt-1 flex items-center justify-between gap-2",
@@ -661,29 +696,22 @@ pub fn AdminMedia() -> Element {
                                         },
                                         "{m.url}"
                                     }
-                                    DeleteMediaButton { id: m.id, on_done: move |_| media.restart() }
+                                    {
+                                        let mid = m.id;
+                                        rsx! {
+                                            ActionButton {
+                                                label: "✕".to_string(),
+                                                class: "text-xs text-red-400 hover:underline".to_string(),
+                                                on_done: move |_| media.restart(),
+                                                action: move |_| Box::pin(async move { delete_media(mid).await }) as ActionFuture,
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-                },
-                Some(Ok(_)) => rsx! { p { class: "text-white/50", "No media yet." } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
-                None => rsx! { p { class: "text-white/50", "Loading…" } },
-            }
-        }
-    }
-}
-
-#[component]
-fn DeleteMediaButton(id: i64, on_done: EventHandler<()>) -> Element {
-    rsx! {
-        button {
-            class: "text-xs text-red-400 hover:underline",
-            onclick: move |_| {
-                spawn(async move { if delete_media(id).await.is_ok() { on_done.call(()); } });
-            },
-            "✕"
+            })}
         }
     }
 }
@@ -726,7 +754,16 @@ fn preview_hue(mut hue: Signal<i64>, h: i64) {
 fn ThemeSelector() -> Element {
     let saved = use_resource(get_theme_hue);
     let mut hue = use_signal(|| DEFAULT_THEME_HUE);
-    let mut msg = use_signal(String::new);
+    // `msg` is `Copy` and written only inside `save_with_status`, so it needn't be `mut` here.
+    let msg = use_signal(String::new);
+
+    // Persist the hue through a debounce so a flurry of preset clicks / slider
+    // releases collapses to a single save of the final value — overlapping
+    // `set_theme_hue` spawns could otherwise land out of order and persist a
+    // stale hue. Live preview (preview_hue) stays instant; only the save waits.
+    let mut save_hue = use_debounce(Duration::from_millis(300), move |h: i64| {
+        save_with_status(set_theme_hue(h), msg, "Saved.");
+    });
 
     // Sync the control to the stored hue once it loads.
     use_effect(move || {
@@ -764,12 +801,7 @@ fn ThemeSelector() -> Element {
                         },
                         onclick: move |_| {
                             preview_hue(hue, h);
-                            spawn(async move {
-                                match set_theme_hue(h).await {
-                                    Ok(()) => msg.set("Saved.".into()),
-                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
-                                }
-                            });
+                            save_hue.action(h);
                         },
                         span {
                             class: "inline-block h-3 w-3 rounded-full",
@@ -792,12 +824,7 @@ fn ThemeSelector() -> Element {
                     onchange: move |e| {
                         if let Ok(h) = e.value().parse::<i64>() {
                             preview_hue(hue, h);
-                            spawn(async move {
-                                match set_theme_hue(h).await {
-                                    Ok(()) => msg.set("Saved.".into()),
-                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
-                                }
-                            });
+                            save_hue.action(h);
                         }
                     },
                 }
@@ -821,7 +848,7 @@ fn ThemeSelector() -> Element {
 fn HomeLayoutSelector() -> Element {
     let saved = use_resource(get_home_layout);
     let mut current = use_signal(HomeLayout::default);
-    let mut msg = use_signal(String::new);
+    let msg = use_signal(String::new);
 
     // Sync the control to the stored layout once it loads.
     use_effect(move || {
@@ -848,12 +875,7 @@ fn HomeLayoutSelector() -> Element {
                         },
                         onclick: move |_| {
                             current.set(layout);
-                            spawn(async move {
-                                match set_home_layout(layout).await {
-                                    Ok(()) => msg.set(format!("Saved “{}”.", layout.label())),
-                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
-                                }
-                            });
+                            save_with_status(set_home_layout(layout), msg, format!("Saved “{}”.", layout.label()));
                         },
                         {layout_thumb(layout)}
                         span { class: "text-xs font-medium", "{layout.label()}" }
@@ -1002,6 +1024,7 @@ pub fn AdminSettings() -> Element {
     let mut title_draft = use_signal(String::new);
     let mut tagline_draft = use_signal(String::new);
     let mut saved = use_signal(|| false);
+    let mut err = use_signal(String::new);
 
     // Seed the drafts from the stored values once they load.
     use_effect(move || {
@@ -1019,8 +1042,25 @@ pub fn AdminSettings() -> Element {
         let t = title_draft();
         let g = tagline_draft();
         spawn(async move {
-            let ok = set_site_title(t).await.is_ok() && set_site_tagline(g).await.is_ok();
-            saved.set(ok);
+            // Run both saves unconditionally — `&&` would short-circuit, skipping
+            // the tagline save whenever the title one failed. Then report exactly
+            // which field(s) didn't persist instead of a blanket "not saved".
+            let title_ok = set_site_title(t).await.is_ok();
+            let tagline_ok = set_site_tagline(g).await.is_ok();
+            if title_ok && tagline_ok {
+                saved.set(true);
+                err.set(String::new());
+            } else {
+                saved.set(false);
+                let mut failed = Vec::new();
+                if !title_ok {
+                    failed.push("title");
+                }
+                if !tagline_ok {
+                    failed.push("tagline");
+                }
+                err.set(format!("Couldn't save {}.", failed.join(" and ")));
+            }
         });
     };
 
@@ -1034,7 +1074,7 @@ pub fn AdminSettings() -> Element {
                         class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
                         placeholder: "dx-blog",
                         value: "{title_draft}",
-                        oninput: move |e| { title_draft.set(e.value()); saved.set(false); },
+                        oninput: move |e| { title_draft.set(e.value()); saved.set(false); err.set(String::new()); },
                     }
                     p { class: "mt-1 text-xs text-white/40", "Shown as the brand in the header and footer." }
                 }
@@ -1044,7 +1084,7 @@ pub fn AdminSettings() -> Element {
                         class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
                         placeholder: "A short subtitle for your site",
                         value: "{tagline_draft}",
-                        oninput: move |e| { tagline_draft.set(e.value()); saved.set(false); },
+                        oninput: move |e| { tagline_draft.set(e.value()); saved.set(false); err.set(String::new()); },
                     }
                     p { class: "mt-1 text-xs text-white/40", "Shown beside the title in the header." }
                 }
@@ -1056,6 +1096,9 @@ pub fn AdminSettings() -> Element {
                     }
                     if saved() {
                         span { class: "text-sm text-green-400", "Saved" }
+                    }
+                    if !err().is_empty() {
+                        span { class: "text-sm text-red-400", "{err}" }
                     }
                 }
             }
@@ -1081,90 +1124,160 @@ pub fn AdminAppearance() -> Element {
 
 #[component]
 pub fn AdminTaxonomy() -> Element {
-    let mut cats = use_resource(list_categories);
-    let mut tags = use_resource(list_tags);
-    let mut new_cat = use_signal(String::new);
-    let mut new_tag = use_signal(String::new);
-    // Inline-rename state: which row (by id) is being edited, and its draft name.
-    let mut edit_cat = use_signal::<Option<i64>>(|| None);
-    let mut edit_cat_name = use_signal(String::new);
-    let mut edit_tag = use_signal::<Option<i64>>(|| None);
-    let mut edit_tag_name = use_signal(String::new);
-
-    let add_cat = move |_| {
-        let name = new_cat();
-        if name.trim().is_empty() {
-            return;
-        }
-        spawn(async move {
-            if create_category(name, None).await.is_ok() {
-                new_cat.set(String::new());
-                cats.restart();
+    rsx! {
+        AdminShell { active: "taxonomy".to_string(),
+            h1 { class: "mb-6 text-2xl font-bold", "Taxonomy" }
+            div { class: "grid gap-8 md:grid-cols-2",
+                TaxonomyEditor { kind: TaxKind::Category }
+                TaxonomyEditor { kind: TaxKind::Tag }
             }
-        });
-    };
-    let add_tag = move |_| {
-        let name = new_tag();
-        if name.trim().is_empty() {
+        }
+    }
+}
+
+/// Which taxonomy a [`TaxonomyEditor`] manages. The category and tag editors were
+/// ~140 lines of near-identical add / list / inline-rename / delete markup; this
+/// enum is the only thing that differed (which server fn to call, the labels), so
+/// one parameterized component now serves both.
+#[derive(Clone, Copy, PartialEq)]
+enum TaxKind {
+    Category,
+    Tag,
+}
+
+impl TaxKind {
+    fn title(self) -> &'static str {
+        match self {
+            TaxKind::Category => "Categories",
+            TaxKind::Tag => "Tags",
+        }
+    }
+    fn placeholder(self) -> &'static str {
+        match self {
+            TaxKind::Category => "New category",
+            TaxKind::Tag => "New tag",
+        }
+    }
+}
+
+/// Add / list / inline-rename / delete editor for one taxonomy. Errors from any
+/// server fn surface inline (previously they were silently swallowed by
+/// `if …is_ok()`), and a rename to an empty name is rejected client-side to match
+/// the server's own guard.
+#[component]
+fn TaxonomyEditor(kind: TaxKind) -> Element {
+    // Both list fns return different row types; normalize to (id, name).
+    let mut items = use_resource(move || async move {
+        match kind {
+            TaxKind::Category => list_categories()
+                .await
+                .map(|v| v.into_iter().map(|c| (c.id, c.name)).collect::<Vec<_>>()),
+            TaxKind::Tag => list_tags()
+                .await
+                .map(|v| v.into_iter().map(|t| (t.id, t.name)).collect::<Vec<_>>()),
+        }
+    });
+    let mut new_name = use_signal(String::new);
+    // Inline-rename state: which row (by id) is being edited, and its draft name.
+    let mut edit_id = use_signal::<Option<i64>>(|| None);
+    let mut edit_name = use_signal(String::new);
+    let mut err = use_signal(String::new);
+
+    let add = move |_| {
+        let name = new_name().trim().to_string();
+        if name.is_empty() {
             return;
         }
         spawn(async move {
-            if create_tag(name).await.is_ok() {
-                new_tag.set(String::new());
-                tags.restart();
+            let res = match kind {
+                TaxKind::Category => create_category(name, None).await.map(|_| ()),
+                TaxKind::Tag => create_tag(name).await.map(|_| ()),
+            };
+            match res {
+                Ok(()) => {
+                    new_name.set(String::new());
+                    err.set(String::new());
+                    items.restart();
+                }
+                Err(e) => err.set(arium_dioxus::friendly_server_error(e)),
             }
         });
     };
 
     rsx! {
-        AdminShell { active: "taxonomy".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Taxonomy" }
-            div { class: "grid gap-8 md:grid-cols-2",
-                section {
-                    h2 { class: "mb-3 text-lg font-semibold", "Categories" }
-                    div { class: "mb-3 flex gap-2",
-                        input { class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm", placeholder: "New category", value: "{new_cat}", oninput: move |e| new_cat.set(e.value()) }
-                        button { class: "rounded bg-brand-600 px-3 text-sm", onclick: add_cat, "Add" }
-                    }
-                    if let Some(Ok(list)) = &*cats.read() {
+        section {
+            h2 { class: "mb-3 text-lg font-semibold", "{kind.title()}" }
+            div { class: "mb-3 flex gap-2",
+                input {
+                    class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                    placeholder: "{kind.placeholder()}",
+                    value: "{new_name}",
+                    oninput: move |e| new_name.set(e.value()),
+                    onkeydown: move |e| if e.key() == Key::Enter { add(()) },
+                }
+                button { class: "rounded bg-brand-600 px-3 text-sm", onclick: move |_| add(()), "Add" }
+            }
+            if !err().is_empty() {
+                p { class: "mb-2 text-xs text-red-400", "{err}" }
+            }
+            match &*items.read() {
+                Some(Ok(list)) if !list.is_empty() => {
+                    let list = list.clone();
+                    rsx! {
                         ul { class: "space-y-1 text-sm",
-                            for c in list.clone() {
+                            for (id, name) in list {
                                 {
-                                    let cid = c.id;
-                                    let cname = c.name.clone();
+                                    let display = name.clone();
                                     let save = move |_| {
-                                        let name = edit_cat_name();
                                         spawn(async move {
-                                            if rename_category(cid, name).await.is_ok() {
-                                                edit_cat.set(None);
-                                                cats.restart();
+                                            let new = edit_name().trim().to_string();
+                                            // Match the server's non-empty guard, with feedback.
+                                            if new.is_empty() {
+                                                err.set("Name can't be empty.".into());
+                                                return;
+                                            }
+                                            let res = match kind {
+                                                TaxKind::Category => rename_category(id, new).await,
+                                                TaxKind::Tag => rename_tag(id, new).await,
+                                            };
+                                            match res {
+                                                Ok(()) => { edit_id.set(None); err.set(String::new()); items.restart(); }
+                                                Err(e) => err.set(arium_dioxus::friendly_server_error(e)),
+                                            }
+                                        });
+                                    };
+                                    let del = move |_| {
+                                        spawn(async move {
+                                            let res = match kind {
+                                                TaxKind::Category => delete_category(id).await,
+                                                TaxKind::Tag => delete_tag(id).await,
+                                            };
+                                            match res {
+                                                Ok(()) => items.restart(),
+                                                Err(e) => err.set(arium_dioxus::friendly_server_error(e)),
                                             }
                                         });
                                     };
                                     rsx! {
-                                        li { key: "{cid}", class: "flex items-center justify-between gap-2",
-                                            if edit_cat() == Some(cid) {
+                                        li { key: "{id}", class: "flex items-center justify-between gap-2",
+                                            if edit_id() == Some(id) {
                                                 input {
                                                     class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
-                                                    value: "{edit_cat_name}",
-                                                    oninput: move |e| edit_cat_name.set(e.value()),
+                                                    value: "{edit_name}",
+                                                    oninput: move |e| edit_name.set(e.value()),
                                                     onkeydown: move |e| if e.key() == Key::Enter { save(()) },
                                                 }
                                                 button { class: "text-xs text-brand-400 hover:underline", onclick: move |_| save(()), "Save" }
-                                                button { class: "text-xs text-white/50 hover:underline",
-                                                    onclick: move |_| edit_cat.set(None), "Cancel"
-                                                }
+                                                button { class: "text-xs text-white/50 hover:underline", onclick: move |_| edit_id.set(None), "Cancel" }
                                             } else {
-                                                span { "{cname}" }
+                                                span { "{display}" }
                                                 div { class: "flex gap-2",
-                                                    button { class: "text-xs text-white/60 hover:underline",
-                                                        onclick: move |_| { edit_cat_name.set(cname.clone()); edit_cat.set(Some(cid)); },
+                                                    button {
+                                                        class: "text-xs text-white/60 hover:underline",
+                                                        onclick: move |_| { edit_name.set(display.clone()); edit_id.set(Some(id)); },
                                                         "Edit"
                                                     }
-                                                    button { class: "text-xs text-red-400 hover:underline",
-                                                        onclick: move |_| { spawn(async move { if delete_category(cid).await.is_ok() { cats.restart(); } }); },
-                                                        "Delete"
-                                                    }
+                                                    button { class: "text-xs text-red-400 hover:underline", onclick: del, "Delete" }
                                                 }
                                             }
                                         }
@@ -1174,55 +1287,9 @@ pub fn AdminTaxonomy() -> Element {
                         }
                     }
                 }
-                section {
-                    h2 { class: "mb-3 text-lg font-semibold", "Tags" }
-                    div { class: "mb-3 flex gap-2",
-                        input { class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm", placeholder: "New tag", value: "{new_tag}", oninput: move |e| new_tag.set(e.value()) }
-                        button { class: "rounded bg-brand-600 px-3 text-sm", onclick: add_tag, "Add" }
-                    }
-                    if let Some(Ok(list)) = &*tags.read() {
-                        div { class: "flex flex-wrap gap-2",
-                            for t in list.clone() {
-                                {
-                                    let tid = t.id;
-                                    let tname = t.name.clone();
-                                    let save = move |_| {
-                                        let name = edit_tag_name();
-                                        spawn(async move {
-                                            if rename_tag(tid, name).await.is_ok() {
-                                                edit_tag.set(None);
-                                                tags.restart();
-                                            }
-                                        });
-                                    };
-                                    rsx! {
-                                        span { key: "{tid}", class: "flex items-center gap-1 rounded-full border border-white/15 px-2 py-0.5 text-xs",
-                                            if edit_tag() == Some(tid) {
-                                                input {
-                                                    class: "w-24 bg-transparent text-xs focus:outline-none",
-                                                    value: "{edit_tag_name}",
-                                                    oninput: move |e| edit_tag_name.set(e.value()),
-                                                    onkeydown: move |e| if e.key() == Key::Enter { save(()) },
-                                                }
-                                                button { class: "text-brand-400", onclick: move |_| save(()), "✓" }
-                                                button { class: "text-white/50", onclick: move |_| edit_tag.set(None), "✕" }
-                                            } else {
-                                                button { class: "hover:underline",
-                                                    onclick: move |_| { edit_tag_name.set(tname.clone()); edit_tag.set(Some(tid)); },
-                                                    "#{tname}"
-                                                }
-                                                button { class: "text-red-400",
-                                                    onclick: move |_| { spawn(async move { if delete_tag(tid).await.is_ok() { tags.restart(); } }); },
-                                                    "✕"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                Some(Ok(_)) => rsx! { p { class: "text-sm text-white/40", "None yet." } },
+                Some(Err(e)) => rsx! { p { class: "text-sm text-red-400", "{e}" } },
+                None => rsx! { p { class: "text-sm text-white/50", "Loading…" } },
             }
         }
     }

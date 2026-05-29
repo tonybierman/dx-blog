@@ -122,7 +122,7 @@ fn main() {
 
         // Dev SQLite DB under ./data unless DATABASE_URL is set.
         let pool = {
-            use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
             use std::str::FromStr;
 
             // SQLite creates the file but not its parent dir.
@@ -133,7 +133,18 @@ fn main() {
                 _ => SqliteConnectOptions::new()
                     .filename(concat!(env!("CARGO_MANIFEST_DIR"), "/data/blog.db"))
                     .create_if_missing(true),
-            };
+            }
+            // WAL lets readers proceed concurrently with a writer — important here
+            // because every page view writes a post_views row while feed/sidebar
+            // reads run; in the default rollback journal those writers block readers.
+            .journal_mode(SqliteJournalMode::Wal)
+            // SQLite leaves foreign-key enforcement OFF per connection by default.
+            // Turn it on (every pooled connection) so the schema's REFERENCES …
+            // ON DELETE clauses actually fire — child rows cascade/null out
+            // instead of orphaning. The hand-rolled cascades in `delete_post`
+            // stay as a belt-and-braces fallback for pre-existing databases that
+            // were created before the constraints were added.
+            .foreign_keys(true);
             SqlitePoolOptions::new()
                 .max_connections(20)
                 .connect_with(connect_opts)
@@ -151,9 +162,20 @@ fn main() {
             .execute(&pool)
             .await?;
 
-        // Auto-seed demo data on a fresh database (no-op once posts exist).
-        if let Err(e) = seed::run_if_empty(&pool).await {
-            eprintln!("[seed] WARN: {e}");
+        // Seed demo data on a fresh database (no-op once posts exist).
+        // GATED on an explicit opt-in, in every build: seeding plants demo
+        // content and accounts, so it must never run unattended on a deploy.
+        // Debug builds used to auto-seed, which silently planted a privileged
+        // admin on any fresh DB — now even `dx serve` needs DX_SEED=1. The
+        // seeded admin's password is randomized/overridable (see seed.rs), so a
+        // promoted env never yields a known-password admin.
+        let seed_enabled = matches!(std::env::var("DX_SEED").ok().as_deref(), Some("1"));
+        if seed_enabled {
+            if let Err(e) = seed::run_if_empty(&pool).await {
+                eprintln!("[seed] WARN: {e}");
+            }
+        } else {
+            println!("[seed] skipped (set DX_SEED=1 to seed demo data)");
         }
 
         let mailer = arium_dioxus::Mailer::from_env()?;
@@ -169,13 +191,26 @@ fn main() {
         // here: the limiter fronts *every* request, so one page load — dozens of
         // per-component CSS assets + the wasm bundle + a burst of feed/sidebar
         // server fns, all from a single dev IP — drains the burst and then 429s
-        // the page's own data calls. Relax it; set DX_RATE_LIMIT=off to disable.
+        // the page's own data calls.
+        //
+        // The wide-open burst 4096 / 256-per-s is a DEV ONLY accommodation for
+        // that: applied unconditionally it would leave a release build with
+        // near-zero brute-force protection on the login endpoint. So gate it on
+        // `debug_assertions` and ship a tighter (but still page-load-friendly)
+        // limit in release. `DX_RATE_LIMIT=off` disables the limiter in any build.
         let builder = {
             let rl = match std::env::var("DX_RATE_LIMIT").ok().as_deref() {
                 Some("off") => None,
-                _ => Some(arium_dioxus::RateLimitConfig {
+                _ if cfg!(debug_assertions) => Some(arium_dioxus::RateLimitConfig {
                     burst: 4096,
                     per_second: 256,
+                }),
+                // Release default: a real page-load burst fits comfortably, while
+                // sustained abuse (credential stuffing) is throttled. Operators
+                // behind a CDN/proxy should tune to their traffic.
+                _ => Some(arium_dioxus::RateLimitConfig {
+                    burst: 128,
+                    per_second: 16,
                 }),
             };
             builder.rate_limit(rl)
@@ -236,6 +271,12 @@ fn App() -> Element {
     // baked into tailwind.css. Until it resolves, the compiled-in default
     // applies, so a default-themed site shows no flash.
     let theme_hue = use_resource(crate::server::settings::get_theme_hue);
+
+    // Site title/tagline resolved once and shared with SiteHeader + SiteFooter via
+    // context, so the chrome doesn't fetch the branding twice per page.
+    let site_chrome: crate::layouts::SiteChrome =
+        use_resource(crate::server::settings::get_site_meta);
+    use_context_provider(|| site_chrome);
 
     rsx! {
         document::Link { rel: "icon", href: FAVICON }

@@ -6,21 +6,11 @@
 use arium_dioxus::auth;
 use arium_dioxus::pool::Pool;
 
-use crate::auth_tokens::{
-    ANALYTICS_READ, COMMENTS_MODERATE, MEDIA_UPLOAD, POSTS_WRITE, POSTS_WRITE_ANY, SETTINGS_WRITE,
-    USERS_MANAGE,
-};
+use crate::auth_tokens::{ALL_TOKENS, MEDIA_UPLOAD, POSTS_WRITE};
 use crate::server::render_markdown;
 
-const ALL_TOKENS: &[&str] = &[
-    POSTS_WRITE,
-    POSTS_WRITE_ANY,
-    MEDIA_UPLOAD,
-    COMMENTS_MODERATE,
-    USERS_MANAGE,
-    SETTINGS_WRITE,
-    ANALYTICS_READ,
-];
+/// Tokens granted to the two demo (non-admin) authors. The admin gets the full
+/// [`ALL_TOKENS`] set.
 const AUTHOR_TOKENS: &[&str] = &[POSTS_WRITE, MEDIA_UPLOAD];
 
 async fn grant_token(pool: &Pool, user_id: i64, token: &str) -> anyhow::Result<()> {
@@ -40,27 +30,67 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
     if posts > 0 {
         return Ok(());
     }
-    println!("[seed] empty blog — seeding demo data (password for every account: 'password')");
+    println!("[seed] empty blog — seeding demo data");
 
     // --- Users -------------------------------------------------------------
-    let admin = auth::create_password_user(pool, "admin@example.com", "password").await?;
+    // The admin is fully privileged, so it must NEVER get the public, hardcoded
+    // "password" the demo authors use. Take it from DX_SEED_ADMIN_PASSWORD, or
+    // mint a random one (via SQLite's randomblob, no rand crate) and print it
+    // once so the operator can sign in.
+    let admin_password = match std::env::var("DX_SEED_ADMIN_PASSWORD") {
+        Ok(p) if !p.trim().is_empty() => p,
+        _ => {
+            let generated: String = sqlx::query_scalar("SELECT lower(hex(randomblob(16)))")
+                .fetch_one(pool)
+                .await?;
+            println!(
+                "[seed] generated admin password for admin@example.com: {generated}\n\
+                 [seed]   (set DX_SEED_ADMIN_PASSWORD to choose your own; shown only once)"
+            );
+            generated
+        }
+    };
+    let admin = auth::create_password_user(pool, "admin@example.com", &admin_password).await?;
     auth::mark_email_verified(pool, admin).await?;
     auth::grant_role(pool, admin, auth::role::ADMIN).await?;
     for t in ALL_TOKENS {
         grant_token(pool, admin, t).await?;
     }
 
+    // The demo authors hold write tokens (POSTS_WRITE/MEDIA_UPLOAD), so a known,
+    // hardcoded password would be a foothold if this ever seeds a shared/staging
+    // DB. In debug builds keep the convenient shared "password" for local demos;
+    // in release require an explicit DX_SEED_DEMO_PASSWORD, else mint a random one
+    // and print it once (same treatment the admin gets).
+    let demo_password = match std::env::var("DX_SEED_DEMO_PASSWORD") {
+        Ok(p) if !p.trim().is_empty() => p,
+        _ if cfg!(debug_assertions) => "password".to_string(),
+        _ => {
+            let generated: String = sqlx::query_scalar("SELECT lower(hex(randomblob(16)))")
+                .fetch_one(pool)
+                .await?;
+            println!(
+                "[seed] generated demo-author password (ada@/linus@example.com): {generated}\n\
+                 [seed]   (set DX_SEED_DEMO_PASSWORD to choose your own; shown only once)"
+            );
+            generated
+        }
+    };
+
     let mut authors = Vec::new();
     for email in ["ada@example.com", "linus@example.com"] {
-        let uid = auth::create_password_user(pool, email, "password").await?;
+        let uid = auth::create_password_user(pool, email, &demo_password).await?;
         auth::mark_email_verified(pool, uid).await?;
         for t in AUTHOR_TOKENS {
             grant_token(pool, uid, t).await?;
         }
         authors.push(uid);
     }
-    // Author pool includes the admin so admin-authored posts exist too.
-    let author_ids = [authors[0], authors[1], admin];
+    // Author pool includes the admin so admin-authored posts exist too. Push
+    // rather than hard-index `authors[0]/[1]` — the email list above drives the
+    // length, so indexing would panic if it were ever trimmed to one entry.
+    authors.push(admin);
+    let author_ids = authors;
 
     // --- Categories --------------------------------------------------------
     let categories = [

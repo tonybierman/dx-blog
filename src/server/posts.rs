@@ -2,10 +2,24 @@
 
 use dioxus::prelude::*;
 
-use crate::model::{PostDetail, PostFeed, PER_PAGE};
+use crate::model::{PostDetail, PostFeed};
+// Used only inside the server-fn bodies, which compile out on the wasm client.
+#[cfg(feature = "server")]
+use crate::model::{page_offset, PER_PAGE};
 
 #[cfg(feature = "server")]
-use crate::server::{sfe, DbExtension};
+use crate::server::{sfe, DbExtension, POST_CARD_COLUMNS, POST_CARD_JOINS};
+
+/// Shared WHERE clause for the published-feed list + its COUNT companion: only
+/// published posts, optionally narrowed by category slug and/or tag slug. Bind
+/// order is `(category_slug, category_slug, tag_slug, tag_slug)` in both queries.
+/// Kept in one place so the filter and its count can't drift apart.
+#[cfg(feature = "server")]
+const LIST_POSTS_WHERE: &str = "WHERE p.status = 'published' \
+     AND (? IS NULL OR c.slug = ?) \
+     AND (? IS NULL OR EXISTS ( \
+           SELECT 1 FROM post_tags pt JOIN tags t ON t.id = pt.tag_id \
+           WHERE pt.post_id = p.id AND t.slug = ?))";
 
 /// Paginated published-post feed, optionally filtered by category or tag slug.
 #[post("/api/posts", db: DbExtension)]
@@ -16,28 +30,13 @@ pub async fn list_posts(
 ) -> Result<PostFeed> {
     use crate::model::PostCard;
     let pool = &db.0;
-    let page = page.max(1);
-    let offset = (page - 1) * PER_PAGE;
+    let (page, offset) = page_offset(page);
 
-    let items = sqlx::query_as::<_, PostCard>(
-        r#"
-        SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
-               p.author_id,
-               COALESCE(u.display_name, u.username) AS author_name,
-               c.name AS category_name,
-               p.status, p.published_at
-        FROM posts p
-        JOIN users u ON u.id = p.author_id
-        LEFT JOIN categories c ON c.id = p.category_id
-        WHERE p.status = 'published'
-          AND (? IS NULL OR c.slug = ?)
-          AND (? IS NULL OR EXISTS (
-                SELECT 1 FROM post_tags pt JOIN tags t ON t.id = pt.tag_id
-                WHERE pt.post_id = p.id AND t.slug = ?))
-        ORDER BY p.published_at DESC, p.id DESC
-        LIMIT ? OFFSET ?
-        "#,
-    )
+    let items = sqlx::query_as::<_, PostCard>(&format!(
+        "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} {LIST_POSTS_WHERE} \
+         ORDER BY p.published_at DESC, p.id DESC \
+         LIMIT ? OFFSET ?"
+    ))
     .bind(&category_slug)
     .bind(&category_slug)
     .bind(&tag_slug)
@@ -48,18 +47,9 @@ pub async fn list_posts(
     .await
     .map_err(sfe)?;
 
-    let total: i64 = sqlx::query_scalar(
-        r#"
-        SELECT COUNT(*)
-        FROM posts p
-        LEFT JOIN categories c ON c.id = p.category_id
-        WHERE p.status = 'published'
-          AND (? IS NULL OR c.slug = ?)
-          AND (? IS NULL OR EXISTS (
-                SELECT 1 FROM post_tags pt JOIN tags t ON t.id = pt.tag_id
-                WHERE pt.post_id = p.id AND t.slug = ?))
-        "#,
-    )
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM posts p {POST_CARD_JOINS} {LIST_POSTS_WHERE}"
+    ))
     .bind(&category_slug)
     .bind(&category_slug)
     .bind(&tag_slug)
@@ -68,12 +58,7 @@ pub async fn list_posts(
     .await
     .map_err(sfe)?;
 
-    Ok(PostFeed {
-        items,
-        total,
-        page,
-        per_page: PER_PAGE,
-    })
+    Ok(PostFeed::new(items, total, page))
 }
 
 /// All published posts, newest first — backs the Masonry archive. `#[post]`
@@ -82,24 +67,14 @@ pub async fn list_posts(
 pub async fn list_archive(page: i64) -> Result<PostFeed> {
     use crate::model::PostCard;
     let pool = &db.0;
-    let page = page.max(1);
-    let offset = (page - 1) * PER_PAGE;
+    let (page, offset) = page_offset(page);
 
-    let items = sqlx::query_as::<_, PostCard>(
-        r#"
-        SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
-               p.author_id,
-               COALESCE(u.display_name, u.username) AS author_name,
-               c.name AS category_name,
-               p.status, p.published_at
-        FROM posts p
-        JOIN users u ON u.id = p.author_id
-        LEFT JOIN categories c ON c.id = p.category_id
-        WHERE p.status = 'published'
-        ORDER BY p.published_at DESC, p.id DESC
-        LIMIT ? OFFSET ?
-        "#,
-    )
+    let items = sqlx::query_as::<_, PostCard>(&format!(
+        "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} \
+         WHERE p.status = 'published' \
+         ORDER BY p.published_at DESC, p.id DESC \
+         LIMIT ? OFFSET ?"
+    ))
     .bind(PER_PAGE)
     .bind(offset)
     .fetch_all(pool)
@@ -111,12 +86,7 @@ pub async fn list_archive(page: i64) -> Result<PostFeed> {
         .await
         .map_err(sfe)?;
 
-    Ok(PostFeed {
-        items,
-        total,
-        page,
-        per_page: PER_PAGE,
-    })
+    Ok(PostFeed::new(items, total, page))
 }
 
 /// Published posts authored by a given username, paginated.
@@ -124,24 +94,14 @@ pub async fn list_archive(page: i64) -> Result<PostFeed> {
 pub async fn posts_by_author(username: String, page: i64) -> Result<PostFeed> {
     use crate::model::PostCard;
     let pool = &db.0;
-    let page = page.max(1);
-    let offset = (page - 1) * PER_PAGE;
+    let (page, offset) = page_offset(page);
 
-    let items = sqlx::query_as::<_, PostCard>(
-        r#"
-        SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
-               p.author_id,
-               COALESCE(u.display_name, u.username) AS author_name,
-               c.name AS category_name,
-               p.status, p.published_at
-        FROM posts p
-        JOIN users u ON u.id = p.author_id
-        LEFT JOIN categories c ON c.id = p.category_id
-        WHERE p.status = 'published' AND u.username = ?
-        ORDER BY p.published_at DESC, p.id DESC
-        LIMIT ? OFFSET ?
-        "#,
-    )
+    let items = sqlx::query_as::<_, PostCard>(&format!(
+        "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} \
+         WHERE p.status = 'published' AND u.username = ? \
+         ORDER BY p.published_at DESC, p.id DESC \
+         LIMIT ? OFFSET ?"
+    ))
     .bind(&username)
     .bind(PER_PAGE)
     .bind(offset)
@@ -161,12 +121,7 @@ pub async fn posts_by_author(username: String, page: i64) -> Result<PostFeed> {
     .await
     .map_err(sfe)?;
 
-    Ok(PostFeed {
-        items,
-        total,
-        page,
-        per_page: PER_PAGE,
-    })
+    Ok(PostFeed::new(items, total, page))
 }
 
 /// The most-viewed published posts — backs the home "Featured" sidebar. Public;
@@ -175,23 +130,14 @@ pub async fn posts_by_author(username: String, page: i64) -> Result<PostFeed> {
 pub async fn featured_posts(limit: i64) -> Result<Vec<crate::model::PostCard>> {
     use crate::model::PostCard;
     let limit = limit.clamp(1, 10);
-    let rows = sqlx::query_as::<_, PostCard>(
-        r#"
-        SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
-               p.author_id,
-               COALESCE(u.display_name, u.username) AS author_name,
-               c.name AS category_name,
-               p.status, p.published_at
-        FROM posts p
-        JOIN users u ON u.id = p.author_id
-        LEFT JOIN categories c ON c.id = p.category_id
-        LEFT JOIN (SELECT post_id, COUNT(*) AS views FROM post_views GROUP BY post_id) v
-          ON v.post_id = p.id
-        WHERE p.status = 'published'
-        ORDER BY COALESCE(v.views, 0) DESC, p.published_at DESC, p.id DESC
-        LIMIT ?
-        "#,
-    )
+    let rows = sqlx::query_as::<_, PostCard>(&format!(
+        "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} \
+         LEFT JOIN (SELECT post_id, COUNT(*) AS views FROM post_views GROUP BY post_id) v \
+           ON v.post_id = p.id \
+         WHERE p.status = 'published' \
+         ORDER BY COALESCE(v.views, 0) DESC, p.published_at DESC, p.id DESC \
+         LIMIT ?"
+    ))
     .bind(limit)
     .fetch_all(&db.0)
     .await

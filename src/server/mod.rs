@@ -30,8 +30,15 @@ pub type DbExtension = axum::Extension<arium_dioxus::pool::Pool>;
 pub type MailExtension = axum::Extension<arium_dioxus::Mailer>;
 
 /// Map any server-side error to a `ServerFnError` for return from server fns.
+///
+/// The real error is logged server-side but NOT sent to the client: a raw sqlx
+/// error string leaks schema, table, and constraint detail to anyone who can hit
+/// an endpoint. Callers that want a specific, safe message (validation, "not
+/// found", …) build a `ServerFnError::new(...)` directly instead of routing
+/// through `sfe`.
 pub fn sfe<E: std::fmt::Display>(e: E) -> ServerFnError {
-    ServerFnError::new(e.to_string())
+    eprintln!("[server] error: {e}");
+    ServerFnError::new("Something went wrong. Please try again.")
 }
 
 /// Require the current session to hold a global permission token. Returns the
@@ -55,6 +62,22 @@ pub fn require_perm(
     }
 }
 
+/// A pragmatic email sanity check: a single `@` with a non-empty local part and
+/// a dotted domain (non-empty labels on both sides of the last dot). Rejects the
+/// likes of `"a@b"` and `"@x.com"`. Not a full RFC validator — for a subscriber
+/// the confirmation email is the real proof. Shared by the subscribe flow and
+/// guest-comment validation so both apply the same rule.
+#[cfg(feature = "server")]
+pub fn looks_like_email(email: &str) -> bool {
+    let Some((local, domain)) = email.split_once('@') else {
+        return false;
+    };
+    if local.is_empty() || domain.contains('@') {
+        return false;
+    }
+    matches!(domain.rsplit_once('.'), Some((host, tld)) if !host.is_empty() && !tld.is_empty())
+}
+
 /// Render Markdown source to sanitized HTML for storage/display.
 #[cfg(feature = "server")]
 pub fn render_markdown(md: &str) -> String {
@@ -71,24 +94,43 @@ pub fn render_markdown(md: &str) -> String {
     ammonia::clean(&unsafe_html)
 }
 
-/// Generate a unique slug from a title, appending `-2`, `-3`, … on collision.
+/// The `PostCard` 10-column projection, shared across every feed/search/analytics
+/// read path so a column change is made in one place. Compose with `format!`;
+/// the `FROM` clause and bind order live in each caller.
+#[cfg(feature = "server")]
+pub const POST_CARD_COLUMNS: &str = "p.id, p.title, p.slug, p.excerpt, p.featured_image_url, \
+     p.author_id, COALESCE(u.display_name, u.username) AS author_name, \
+     c.name AS category_name, p.status, p.published_at";
+
+/// The joins those columns depend on (author for `author_name`, category for
+/// `category_name`). Placed right after a `FROM` that aliases the posts row as
+/// `p` (the plain `FROM posts p`, or the FTS join in search).
+#[cfg(feature = "server")]
+pub const POST_CARD_JOINS: &str =
+    "JOIN users u ON u.id = p.author_id LEFT JOIN categories c ON c.id = p.category_id";
+
+/// Generate a unique slug for `name` within `table`, appending `-2`, `-3`, … on
+/// collision. `table` is always an internal constant (`"posts"`, `"categories"`,
+/// `"tags"`), never user input, so interpolating it into the query is safe.
 #[cfg(feature = "server")]
 pub async fn unique_slug(
     pool: &arium_dioxus::pool::Pool,
-    title: &str,
+    table: &str,
+    name: &str,
 ) -> Result<String, sqlx::Error> {
     let base = {
-        let s = slug::slugify(title);
+        let s = slug::slugify(name);
         if s.is_empty() {
-            "post".to_string()
+            "item".to_string()
         } else {
             s
         }
     };
     let mut candidate = base.clone();
     let mut n = 2;
+    let sql = format!("SELECT id FROM {table} WHERE slug = ?");
     loop {
-        let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM posts WHERE slug = ?")
+        let exists: Option<i64> = sqlx::query_scalar(&sql)
             .bind(&candidate)
             .fetch_optional(pool)
             .await?;
@@ -98,4 +140,43 @@ pub async fn unique_slug(
         candidate = format!("{base}-{n}");
         n += 1;
     }
+}
+
+/// Resolve a unique slug for `name` in `table`, then run `insert(slug)` — and if
+/// a concurrent creator grabbed that same slug in the check-then-insert gap (a
+/// `UNIQUE` violation on the slug column), recompute and retry a bounded number
+/// of times. Without this, two simultaneous "create with the same title" calls
+/// both see the slug free, and the loser's INSERT surfaces a raw 500 instead of
+/// quietly landing on `-2`. Non-unique-violation errors propagate immediately.
+#[cfg(feature = "server")]
+pub async fn create_with_unique_slug<T, F, Fut>(
+    pool: &arium_dioxus::pool::Pool,
+    table: &str,
+    name: &str,
+    mut insert: F,
+) -> Result<T, ServerFnError>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
+{
+    const MAX_ATTEMPTS: usize = 5;
+    for attempt in 0..MAX_ATTEMPTS {
+        let slug = unique_slug(pool, table, name).await.map_err(sfe)?;
+        match insert(slug).await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                let collided = e
+                    .as_database_error()
+                    .is_some_and(|d| d.is_unique_violation());
+                if collided && attempt + 1 < MAX_ATTEMPTS {
+                    continue;
+                }
+                return Err(sfe(e));
+            }
+        }
+    }
+    // The loop only falls through after MAX_ATTEMPTS unique-violation retries.
+    Err(ServerFnError::new(
+        "Couldn't allocate a unique slug; please retry.",
+    ))
 }

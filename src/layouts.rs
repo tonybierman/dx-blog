@@ -11,11 +11,16 @@ use dioxus::prelude::*;
 use arium_dioxus::server::logout;
 use arium_dioxus::ui::use_permissions;
 
-use crate::auth_tokens::{
-    ANALYTICS_READ, COMMENTS_MODERATE, POSTS_WRITE, POSTS_WRITE_ANY, SETTINGS_WRITE, USERS_MANAGE,
-};
-use crate::server::settings::{get_site_tagline, get_site_title, DEFAULT_SITE_TITLE};
+use crate::auth_tokens::ADMIN_NAV_TOKENS;
+use crate::model::SiteMeta;
+use crate::server::settings::DEFAULT_SITE_TITLE;
 use crate::Route;
+
+/// Site chrome (title + tagline) resolved once per page and shared via context so
+/// `SiteHeader` and `SiteFooter` don't each issue their own fetch. The App root
+/// provides it (see `main::App`); both consumers fall back to the compiled-in
+/// default until it resolves client-side.
+pub type SiteChrome = Resource<Result<SiteMeta>>;
 
 /// Persistent top navigation shared by chrome-bearing layouts. Reflects the
 /// current sign-in state via arium's permissions context.
@@ -23,34 +28,25 @@ use crate::Route;
 pub fn SiteHeader() -> Element {
     let perms = use_permissions();
     let authed = perms.is_authenticated();
-    let can_admin = authed
-        && [
-            POSTS_WRITE,
-            POSTS_WRITE_ANY,
-            COMMENTS_MODERATE,
-            USERS_MANAGE,
-            SETTINGS_WRITE,
-            ANALYTICS_READ,
-        ]
-        .iter()
-        .copied()
-        .any(|t| perms.has(t));
+    let can_admin = authed && ADMIN_NAV_TOKENS.iter().copied().any(|t| perms.has(t));
     let name = perms
         .profile()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
 
-    // Admin-configurable branding (see AdminSettings). Falls back to the
-    // compiled-in default until the stored title loads.
-    let title_res = use_resource(get_site_title);
-    let tagline_res = use_resource(get_site_tagline);
-    let title = match &*title_res.read() {
-        Some(Ok(t)) if !t.is_empty() => t.clone(),
-        _ => DEFAULT_SITE_TITLE.to_string(),
-    };
-    let tagline = match &*tagline_res.read() {
-        Some(Ok(t)) if !t.is_empty() => Some(t.clone()),
-        _ => None,
+    // Admin-configurable branding (see AdminSettings), shared via context with
+    // SiteFooter. Falls back to the compiled-in default until the meta resolves.
+    let chrome = use_context::<SiteChrome>();
+    let (title, tagline) = match &*chrome.read() {
+        Some(Ok(m)) => (
+            if m.title.is_empty() {
+                DEFAULT_SITE_TITLE.to_string()
+            } else {
+                m.title.clone()
+            },
+            (!m.tagline.is_empty()).then(|| m.tagline.clone()),
+        ),
+        _ => (DEFAULT_SITE_TITLE.to_string(), None),
     };
 
     rsx! {
@@ -94,9 +90,9 @@ pub fn SiteHeader() -> Element {
 /// Shared footer.
 #[component]
 pub fn SiteFooter() -> Element {
-    let title_res = use_resource(get_site_title);
-    let title = match &*title_res.read() {
-        Some(Ok(t)) if !t.is_empty() => t.clone(),
+    let chrome = use_context::<SiteChrome>();
+    let title = match &*chrome.read() {
+        Some(Ok(m)) if !m.title.is_empty() => m.title.clone(),
         _ => DEFAULT_SITE_TITLE.to_string(),
     };
     rsx! {

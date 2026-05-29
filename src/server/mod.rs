@@ -10,6 +10,8 @@ pub mod admin;
 pub mod analytics;
 pub mod authors;
 pub mod comments;
+#[cfg(feature = "server")]
+pub mod feeds;
 pub mod posts;
 pub mod search;
 pub mod settings;

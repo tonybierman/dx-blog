@@ -177,7 +177,21 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                     span { "· {when}" }
                 }
             }
-            div { class: "prose mt-8 max-w-none", dangerous_inner_html: "{post.body_html}" }
+            // "Rust MDX": split the body into rendered-markdown runs and live
+            // embed blocks, mounting each embed as a real interactive component
+            // interleaved with the prose (see `crate::mdx`).
+            div { class: "prose mt-8 max-w-none",
+                for (i, seg) in crate::mdx::parse_body(&post.body_md).into_iter().enumerate() {
+                    match seg {
+                        crate::mdx::Segment::Html(html) => rsx! {
+                            div { key: "{i}", dangerous_inner_html: "{html}" }
+                        },
+                        crate::mdx::Segment::Embed { name, props } => rsx! {
+                            crate::embeds::EmbedBlock { key: "{i}", name, props }
+                        },
+                    }
+                }
+            }
 
             // Author bio
             if let Some(bio) = post.author_bio.clone() {

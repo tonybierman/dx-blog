@@ -165,12 +165,14 @@ fn EditorForm(initial: PostEditData) -> Element {
     let media = use_resource(list_media);
     let mut show_media_picker = use_signal(|| false);
 
-    // Live preview renders in the browser (WASM): `render_markdown` is the same
+    // Live preview renders in the browser (WASM): `parse_body` runs the same
     // pulldown-cmark + ammonia pipeline the server uses to produce stored
-    // `body_html`, so the preview is byte-for-byte what gets saved. Running it
-    // locally means zero-latency, offline-capable preview with no server load —
-    // so no debounce is needed; `use_memo` recomputes synchronously per keystroke.
-    let preview_html = use_memo(move || crate::server::render_markdown(&body()));
+    // `body_html`, so prose is byte-for-byte what gets saved, and it mounts the
+    // same live "Rust MDX" embed components the reader does — authors see
+    // interactive blocks as they type. Running it locally means zero-latency,
+    // offline-capable preview with no server load, so no debounce is needed;
+    // `use_memo` recomputes synchronously per keystroke.
+    let preview = use_memo(move || crate::mdx::parse_body(&body()));
 
     let post_id = initial.id;
     let submit = move |_| {
@@ -324,7 +326,16 @@ fn EditorForm(initial: PostEditData) -> Element {
             div {
                 h3 { class: "mb-2 text-sm uppercase tracking-wide text-white/40", "Preview" }
                 div { class: "prose max-w-none rounded border border-white/10 p-4",
-                    div { dangerous_inner_html: "{preview_html}" }
+                    for (i, seg) in preview().into_iter().enumerate() {
+                        match seg {
+                            crate::mdx::Segment::Html(html) => rsx! {
+                                div { key: "{i}", dangerous_inner_html: "{html}" }
+                            },
+                            crate::mdx::Segment::Embed { name, props } => rsx! {
+                                crate::embeds::EmbedBlock { key: "{i}", name, props }
+                            },
+                        }
+                    }
                 }
             }
         }

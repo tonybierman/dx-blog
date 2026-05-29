@@ -205,6 +205,104 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
         .await?;
     }
 
+    // --- "Rust MDX" demo posts ---------------------------------------------
+    // One post per live embeddable component, so each `[[component:…]]` block can
+    // be opened on its own page. The prose renders through the normal pipeline;
+    // `body_html` is still populated for feeds/RSS/SEO, which ignore the
+    // interactive blocks.
+    let mdx_demos: &[(&str, &str, &str, &str)] = &[
+        (
+            "rust-mdx-counter",
+            "Rust MDX: a reactive counter",
+            "A signal-driven counter mounted straight from Markdown — state lives in Rust, not an iframe.",
+            "\
+This counter is a **real Dioxus component** mounted from Markdown. Its state \
+lives in a Rust signal compiled to WASM — no iframe.
+
+[[component:counter start=0 step=1 label=\"Clicks\"]]
+
+> Same Rust, same types, client and server — that's the point.",
+        ),
+        (
+            "rust-mdx-chart",
+            "Rust MDX: an inline SVG chart",
+            "A chart rendered from inline data with hand-rolled SVG — no charting library.",
+            "\
+No charting library here — just hand-rolled SVG generated from inline data.
+
+[[component:chart data=\"3,7,2,9,5,8,4\" kind=\"bar\" color=\"#6366f1\"]]
+
+The same block renders a line instead:
+
+[[component:chart data=\"3,7,2,9,5,8,4\" kind=\"line\" color=\"#22d3ee\"]]",
+        ),
+        (
+            "rust-mdx-tweak",
+            "Rust MDX: a tweakable visualization",
+            "Drag a slider and watch the curve recompute live in the browser.",
+            "\
+Drag the slider; the curve recomputes live in WASM on every input.
+
+[[component:tweak label=\"Frequency\"]]",
+        ),
+        (
+            "rust-mdx-livechart",
+            "Rust MDX: a live data feed",
+            "New samples stream in on a timer and the window scrolls — all client-side.",
+            "\
+New samples stream in on a timer and the window scrolls left — entirely \
+client-side, starting once the page hydrates.
+
+[[component:livechart interval=800 window=28 color=\"#22d3ee\" label=\"Live feed\"]]",
+        ),
+        (
+            "rust-mdx-stockchart",
+            "Rust MDX: a live trading ticker",
+            "A candlestick chart with volume that moves as the market \"opens\".",
+            "\
+Candles (with volume bars below) print on the right as the market \"opens\" — \
+the price ticks and the session change flips green/red.
+
+[[component:stockchart symbol=\"ACME\" interval=900 window=36 start=128]]",
+        ),
+    ];
+
+    for (i, (slug, title, excerpt, body_md)) in mdx_demos.iter().enumerate() {
+        let author = author_ids[i % author_ids.len()];
+        let category = category_ids[i % category_ids.len()];
+        let body_html = render_markdown(body_md);
+
+        let pid: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO posts
+              (title, slug, body_md, body_html, excerpt, author_id, category_id, status, published_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'published', datetime('now', ?))
+            RETURNING id
+            "#,
+        )
+        .bind(title)
+        .bind(slug)
+        .bind(body_md)
+        .bind(&body_html)
+        .bind(excerpt)
+        .bind(author)
+        .bind(category)
+        .bind(format!("-{i} minutes")) // keep a stable order in the feed
+        .fetch_one(pool)
+        .await?;
+        post_ids.push((pid, author));
+
+        sqlx::query(
+            "INSERT INTO arium_resource_members (kind, resource_id, user_id, role)
+             VALUES ('post', ?, ?, 'owner')
+             ON CONFLICT (kind, resource_id, user_id) DO UPDATE SET role = excluded.role",
+        )
+        .bind(pid)
+        .bind(author)
+        .execute(pool)
+        .await?;
+    }
+
     // --- Comments (30, mix of guest/user & pending/approved) ---------------
     for i in 0..30 {
         let (pid, _) = post_ids[i % post_ids.len()];
@@ -246,7 +344,10 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
             .await?;
     }
 
-    println!("[seed] done: 3 users, 4 categories, 10 tags, 20 posts, 30 comments, 5 subscribers");
+    println!(
+        "[seed] done: 3 users, 4 categories, 10 tags, 25 posts (incl. 5 Rust MDX demos), \
+         30 comments, 5 subscribers"
+    );
     Ok(())
 }
 

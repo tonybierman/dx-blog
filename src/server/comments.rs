@@ -80,9 +80,7 @@ pub async fn create_comment(
             let name = guest_name.unwrap_or_default();
             let email = guest_email.unwrap_or_default();
             if name.trim().is_empty() || email.trim().is_empty() {
-                return Err(
-                    ServerFnError::new("Guests must provide a name and email.").into(),
-                );
+                return Err(ServerFnError::new("Guests must provide a name and email.").into());
             }
             (None, Some(name), Some(email))
         }

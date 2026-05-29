@@ -106,11 +106,10 @@ pub async fn list_archive(page: i64) -> Result<PostFeed> {
     .await
     .map_err(sfe)?;
 
-    let total: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM posts WHERE status = 'published'")
-            .fetch_one(pool)
-            .await
-            .map_err(sfe)?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM posts WHERE status = 'published'")
+        .fetch_one(pool)
+        .await
+        .map_err(sfe)?;
 
     Ok(PostFeed {
         items,

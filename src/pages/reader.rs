@@ -234,7 +234,9 @@ fn PaginatedFeed(category_slug: Option<String>, tag_slug: Option<String>) -> Ele
 pub fn CategoryFeed(slug: String) -> Element {
     let cat = {
         let slug = slug.clone();
-        use_resource(use_reactive!(|(slug,)| async move { get_category(slug).await }))
+        use_resource(use_reactive!(
+            |(slug,)| async move { get_category(slug).await }
+        ))
     };
     let title = match &*cat.read() {
         Some(Ok(Some(c))) => c.name.clone(),
@@ -299,7 +301,9 @@ pub fn TagFeed(slug: String) -> Element {
 pub fn AuthorProfile(slug: String) -> Element {
     let profile = {
         let slug = slug.clone();
-        use_resource(use_reactive!(|(slug,)| async move { get_author_profile(slug).await }))
+        use_resource(use_reactive!(|(slug,)| async move {
+            get_author_profile(slug).await
+        }))
     };
     let mut page = use_signal(|| 1i64);
     let posts = {
@@ -490,7 +494,9 @@ pub fn Subscribe() -> Element {
             match subscribe(e).await {
                 Ok(()) => {
                     email.set(String::new());
-                    status.set("Almost there — check your inbox to confirm your subscription.".into());
+                    status.set(
+                        "Almost there — check your inbox to confirm your subscription.".into(),
+                    );
                 }
                 Err(err) => status.set(arium_dioxus::friendly_server_error(err)),
             }

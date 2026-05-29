@@ -45,20 +45,32 @@ fn render_markdown_emits_html() {
     let html = render_markdown("# Title\n\nSome **bold** and a [link](https://example.com).");
     assert!(html.contains("<h1>"), "heading should render: {html}");
     assert!(html.contains("<strong>"), "bold should render: {html}");
-    assert!(html.contains("href=\"https://example.com\""), "link should render: {html}");
+    assert!(
+        html.contains("href=\"https://example.com\""),
+        "link should render: {html}"
+    );
 }
 
 #[test]
 fn render_markdown_strips_dangerous_html() {
     let html = render_markdown("Hello <script>alert('xss')</script> world");
-    assert!(!html.contains("<script"), "script tag must be sanitized away: {html}");
-    assert!(html.contains("Hello"), "surrounding text should survive: {html}");
+    assert!(
+        !html.contains("<script"),
+        "script tag must be sanitized away: {html}"
+    );
+    assert!(
+        html.contains("Hello"),
+        "surrounding text should survive: {html}"
+    );
 }
 
 #[test]
 fn render_markdown_drops_onclick_attributes() {
     let html = render_markdown("<a href=\"#\" onclick=\"steal()\">x</a>");
-    assert!(!html.contains("onclick"), "event handlers must be stripped: {html}");
+    assert!(
+        !html.contains("onclick"),
+        "event handlers must be stripped: {html}"
+    );
 }
 
 // ---------------------------------------------------------------- slug uniqueness
@@ -109,16 +121,29 @@ async fn has_prior_approved(pool: &Pool, author_id: i64) -> bool {
 async fn returning_approved_commenter_is_recognized() {
     let pool = test_pool().await;
     // Author 1 already has an approved comment; author 2 only a pending one.
-    sqlx::query("INSERT INTO comments (post_id, author_id, body, status) VALUES (1, 1, 'hi', 'approved')")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO comments (post_id, author_id, body, status) VALUES (1, 2, 'hi', 'pending')")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO comments (post_id, author_id, body, status) VALUES (1, 1, 'hi', 'approved')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO comments (post_id, author_id, body, status) VALUES (1, 2, 'hi', 'pending')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
-    assert!(has_prior_approved(&pool, 1).await, "author 1 should auto-approve");
-    assert!(!has_prior_approved(&pool, 2).await, "author 2 should stay pending");
-    assert!(!has_prior_approved(&pool, 99).await, "unknown author stays pending");
+    assert!(
+        has_prior_approved(&pool, 1).await,
+        "author 1 should auto-approve"
+    );
+    assert!(
+        !has_prior_approved(&pool, 2).await,
+        "author 2 should stay pending"
+    );
+    assert!(
+        !has_prior_approved(&pool, 99).await,
+        "unknown author stays pending"
+    );
 }

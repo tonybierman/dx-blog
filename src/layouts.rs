@@ -120,10 +120,7 @@ pub fn FullBleedLayout(children: Element) -> Element {
 /// Bento grid: an asymmetric tile grid. Callers pass `.bento-tile` children;
 /// add `bento-feature` (2x2) / `bento-wide` (span 2) classes on tiles to vary.
 #[component]
-pub fn BentoGridLayout(
-    #[props(optional)] left: Option<Element>,
-    children: Element,
-) -> Element {
+pub fn BentoGridLayout(#[props(optional)] left: Option<Element>, children: Element) -> Element {
     rsx! {
         div { class: "flex min-h-screen flex-col",
             SiteHeader {}

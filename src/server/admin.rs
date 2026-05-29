@@ -7,7 +7,9 @@ use dioxus::prelude::*;
 use crate::model::{Category, CommentView, MediaItem, PostCard, PostEditData, Tag};
 
 #[cfg(feature = "server")]
-use crate::auth_tokens::{COMMENTS_MODERATE, MEDIA_UPLOAD, POSTS_WRITE, POSTS_WRITE_ANY, SETTINGS_WRITE};
+use crate::auth_tokens::{
+    COMMENTS_MODERATE, MEDIA_UPLOAD, POSTS_WRITE, POSTS_WRITE_ANY, SETTINGS_WRITE,
+};
 #[cfg(feature = "server")]
 use crate::server::{render_markdown, require_perm, sfe, unique_slug, DbExtension};
 
@@ -226,15 +228,22 @@ pub async fn admin_list_posts(
 pub async fn get_post_edit(id: i64) -> Result<PostEditData> {
     can_edit_post(&auth, &db.0, &authority, id).await?;
 
-    let row: (String, String, String, String, Option<i64>, Option<String>, String) =
-        sqlx::query_as(
-            "SELECT title, slug, body_md, excerpt, category_id, featured_image_url, status
+    let row: (
+        String,
+        String,
+        String,
+        String,
+        Option<i64>,
+        Option<String>,
+        String,
+    ) = sqlx::query_as(
+        "SELECT title, slug, body_md, excerpt, category_id, featured_image_url, status
              FROM posts WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_one(&db.0)
-        .await
-        .map_err(sfe)?;
+    )
+    .bind(id)
+    .fetch_one(&db.0)
+    .await
+    .map_err(sfe)?;
 
     let tag_ids: Vec<i64> = sqlx::query_scalar("SELECT tag_id FROM post_tags WHERE post_id = ?")
         .bind(id)
@@ -351,7 +360,12 @@ pub async fn create_category(name: String, description: Option<String>) -> Resul
     .fetch_one(&db.0)
     .await
     .map_err(sfe)?;
-    Ok(Category { id, name, slug, description })
+    Ok(Category {
+        id,
+        name,
+        slug,
+        description,
+    })
 }
 
 #[post("/api/admin/categories/delete", auth: arium_dioxus::auth::Session, db: DbExtension)]
@@ -438,7 +452,11 @@ async fn unique_slug_generic(
 ) -> std::result::Result<String, ServerFnError> {
     let base = {
         let s = slug::slugify(name);
-        if s.is_empty() { "item".to_string() } else { s }
+        if s.is_empty() {
+            "item".to_string()
+        } else {
+            s
+        }
     };
     let mut candidate = base.clone();
     let mut n = 2;
@@ -484,7 +502,13 @@ pub async fn upload_media(filename: String, data_base64: String) -> Result<Media
 
     let safe: String = filename
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
 
     // Reserve a row to get a unique id, then write the file and fill in the url.
@@ -515,7 +539,13 @@ pub async fn upload_media(filename: String, data_base64: String) -> Result<Media
         .await
         .map_err(sfe)?;
 
-    Ok(MediaItem { id, filename: safe, url, uploaded_by: uid, created_at })
+    Ok(MediaItem {
+        id,
+        filename: safe,
+        url,
+        uploaded_by: uid,
+        created_at,
+    })
 }
 
 #[post("/api/admin/media/delete", auth: arium_dioxus::auth::Session, db: DbExtension)]

@@ -210,14 +210,25 @@ pub async fn atom_handler(db: DbExtension) -> impl IntoResponse {
         xml_escape(&feed_url)
     ));
     body.push_str(&format!("  <id>{}/</id>\n", xml_escape(&base)));
-    body.push_str(&format!("  <updated>{}</updated>\n", xml_escape(&feed_updated)));
+    body.push_str(&format!(
+        "  <updated>{}</updated>\n",
+        xml_escape(&feed_updated)
+    ));
 
     for p in posts {
         let url = format!("{base}/post/{}", p.slug);
-        let published = p.published_at.as_deref().map(to_rfc3339).unwrap_or_default();
+        let published = p
+            .published_at
+            .as_deref()
+            .map(to_rfc3339)
+            .unwrap_or_default();
         let updated = {
             let u = to_rfc3339(&p.updated_at);
-            if u.is_empty() { published.clone() } else { u }
+            if u.is_empty() {
+                published.clone()
+            } else {
+                u
+            }
         };
 
         body.push_str("  <entry>\n");
@@ -225,17 +236,26 @@ pub async fn atom_handler(db: DbExtension) -> impl IntoResponse {
         body.push_str(&format!("    <link href=\"{}\"/>\n", xml_escape(&url)));
         body.push_str(&format!("    <id>{}</id>\n", xml_escape(&url)));
         if !published.is_empty() {
-            body.push_str(&format!("    <published>{}</published>\n", xml_escape(&published)));
+            body.push_str(&format!(
+                "    <published>{}</published>\n",
+                xml_escape(&published)
+            ));
         }
         if !updated.is_empty() {
-            body.push_str(&format!("    <updated>{}</updated>\n", xml_escape(&updated)));
+            body.push_str(&format!(
+                "    <updated>{}</updated>\n",
+                xml_escape(&updated)
+            ));
         }
         body.push_str(&format!(
             "    <author><name>{}</name></author>\n",
             xml_escape(&p.author_name)
         ));
         if !p.excerpt.trim().is_empty() {
-            body.push_str(&format!("    <summary>{}</summary>\n", xml_escape(&p.excerpt)));
+            body.push_str(&format!(
+                "    <summary>{}</summary>\n",
+                xml_escape(&p.excerpt)
+            ));
         }
         body.push_str(&format!(
             "    <content type=\"html\">{}</content>\n",

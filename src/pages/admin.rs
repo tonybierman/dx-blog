@@ -204,7 +204,11 @@ pub fn AdminPostList() -> Element {
     // Clicking a sortable header toggles between its asc/desc variants.
     let mut toggle_sort = move |asc: &str, desc: &str| {
         let cur = sort();
-        sort.set(if cur == asc { desc.to_string() } else { asc.to_string() });
+        sort.set(if cur == asc {
+            desc.to_string()
+        } else {
+            asc.to_string()
+        });
     };
 
     rsx! {
@@ -311,7 +315,9 @@ pub fn AdminPostNew() -> Element {
 
 #[component]
 pub fn AdminPostEdit(id: i64) -> Element {
-    let data = use_resource(use_reactive!(|(id,)| async move { get_post_edit(id).await }));
+    let data = use_resource(use_reactive!(
+        |(id,)| async move { get_post_edit(id).await }
+    ));
     rsx! {
         AdminShell { active: "posts".to_string(),
             match &*data.read() {
@@ -362,7 +368,9 @@ fn EditorForm(initial: PostEditData) -> Element {
         let feat = if f.trim().is_empty() { None } else { Some(f) };
         spawn(async move {
             let result = if editing {
-                update_post(post_id, t, b, ex, cat, tag_ids, feat, st).await.map(|_| post_id)
+                update_post(post_id, t, b, ex, cat, tag_ids, feat, st)
+                    .await
+                    .map(|_| post_id)
             } else {
                 create_post(t, b, ex, cat, tag_ids, feat, st).await
             };
@@ -607,7 +615,10 @@ pub fn AdminMedia() -> Element {
                 Ok(s) if !s.is_empty() => {
                     if let Some((name, b64)) = s.split_once('|') {
                         match upload_media(name.to_string(), b64.to_string()).await {
-                            Ok(_) => { msg.set("Uploaded.".into()); media.restart(); }
+                            Ok(_) => {
+                                msg.set("Uploaded.".into());
+                                media.restart();
+                            }
                             Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
                         }
                     }
@@ -814,16 +825,26 @@ pub fn AdminSettings() -> Element {
 
     let add_cat = move |_| {
         let name = new_cat();
-        if name.trim().is_empty() { return; }
+        if name.trim().is_empty() {
+            return;
+        }
         spawn(async move {
-            if create_category(name, None).await.is_ok() { new_cat.set(String::new()); cats.restart(); }
+            if create_category(name, None).await.is_ok() {
+                new_cat.set(String::new());
+                cats.restart();
+            }
         });
     };
     let add_tag = move |_| {
         let name = new_tag();
-        if name.trim().is_empty() { return; }
+        if name.trim().is_empty() {
+            return;
+        }
         spawn(async move {
-            if create_tag(name).await.is_ok() { new_tag.set(String::new()); tags.restart(); }
+            if create_tag(name).await.is_ok() {
+                new_tag.set(String::new());
+                tags.restart();
+            }
         });
     };
 

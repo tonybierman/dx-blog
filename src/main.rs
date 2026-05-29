@@ -24,15 +24,15 @@ mod pages;
 mod seed;
 mod server;
 
+use pages::admin::{
+    AdminAnalytics, AdminComments, AdminDashboard, AdminMedia, AdminPostEdit, AdminPostList,
+    AdminPostNew, AdminSettings, AdminUsers,
+};
 use pages::auth::{
     AccountPage, ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage,
 };
 use pages::errors::{NotFound, ServerError};
 use pages::home::HomePage;
-use pages::admin::{
-    AdminAnalytics, AdminComments, AdminDashboard, AdminMedia, AdminPostEdit, AdminPostList,
-    AdminPostNew, AdminSettings, AdminUsers,
-};
 use pages::reader::{
     Archive, AuthorProfile, CategoryFeed, ConfirmSubscription, PostDetail, SearchResults,
     Subscribe, TagFeed,
@@ -157,7 +157,8 @@ fn main() {
 
         // SqlMembershipStore is arium's bundled ResourceAuthority over
         // arium_resource_members — register it so per-post role checks resolve.
-        let authority: arium_dioxus::SharedResourceAuthority = Arc::new(arium_dioxus::SqlMembershipStore);
+        let authority: arium_dioxus::SharedResourceAuthority =
+            Arc::new(arium_dioxus::SqlMembershipStore);
 
         let builder = arium_dioxus::AuthConfig::builder(pool, mailer).resource_authority(authority);
         let builder = match arium_dioxus::oauth::github::GithubProvider::from_env()? {

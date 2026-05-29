@@ -49,7 +49,9 @@ pub fn require_perm(
     if user.permissions.contains(token) {
         Ok(user.id as i64)
     } else {
-        Err(ServerFnError::new("You don't have permission for this action."))
+        Err(ServerFnError::new(
+            "You don't have permission for this action.",
+        ))
     }
 }
 
@@ -86,11 +88,10 @@ pub async fn unique_slug(
     let mut candidate = base.clone();
     let mut n = 2;
     loop {
-        let exists: Option<i64> =
-            sqlx::query_scalar("SELECT id FROM posts WHERE slug = ?")
-                .bind(&candidate)
-                .fetch_optional(pool)
-                .await?;
+        let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM posts WHERE slug = ?")
+            .bind(&candidate)
+            .fetch_optional(pool)
+            .await?;
         if exists.is_none() {
             return Ok(candidate);
         }

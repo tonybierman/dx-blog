@@ -64,7 +64,11 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
 
     // --- Categories --------------------------------------------------------
     let categories = [
-        ("Engineering", "engineering", "Posts about building software."),
+        (
+            "Engineering",
+            "engineering",
+            "Posts about building software.",
+        ),
         ("Design", "design", "Visual and interaction design."),
         ("Product", "product", "Shipping and strategy."),
         ("Culture", "culture", "Team and ways of working."),
@@ -84,16 +88,25 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
 
     // --- Tags --------------------------------------------------------------
     let tags = [
-        "rust", "dioxus", "web", "sqlite", "ux", "performance", "async", "tooling", "career",
+        "rust",
+        "dioxus",
+        "web",
+        "sqlite",
+        "ux",
+        "performance",
+        "async",
+        "tooling",
+        "career",
         "open-source",
     ];
     let mut tag_ids = Vec::new();
     for name in tags {
-        let id: i64 = sqlx::query_scalar("INSERT INTO tags (name, slug) VALUES (?, ?) RETURNING id")
-            .bind(name)
-            .bind(name)
-            .fetch_one(pool)
-            .await?;
+        let id: i64 =
+            sqlx::query_scalar("INSERT INTO tags (name, slug) VALUES (?, ?) RETURNING id")
+                .bind(name)
+                .bind(name)
+                .fetch_one(pool)
+                .await?;
         tag_ids.push(id);
     }
 

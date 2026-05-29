@@ -131,7 +131,7 @@ pub fn AdminAnalytics() -> Element {
                                 for d in days {
                                     div {
                                         key: "{d.day}",
-                                        class: "group relative flex-1 rounded-t bg-sky-500/70 hover:bg-sky-400",
+                                        class: "group relative flex-1 rounded-t bg-brand-500/70 hover:bg-brand-400",
                                         style: "height: {(d.views * 100) / peak}%",
                                         title: "{d.day}: {d.views} views",
                                     }
@@ -210,7 +210,7 @@ pub fn AdminPostList() -> Element {
         AdminShell { active: "posts".to_string(),
             div { class: "mb-6 flex items-center justify-between",
                 h1 { class: "text-2xl font-bold", "Posts" }
-                Link { to: Route::AdminPostNew, class: "rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500", "New post" }
+                Link { to: Route::AdminPostNew, class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", "New post" }
             }
             div { class: "mb-4 flex items-center gap-3 text-sm",
                 label { class: "text-white/50", "Status" }
@@ -263,7 +263,7 @@ pub fn AdminPostList() -> Element {
                                         td { span { class: "rounded-full border border-white/15 px-2 py-0.5 text-xs", "{p.status}" } }
                                         td { class: "text-white/50", {p.published_at.clone().unwrap_or_else(|| "—".into())} }
                                         td { class: "flex gap-3 py-2",
-                                            Link { to: Route::AdminPostEdit { id: p.id }, class: "text-sky-400 hover:underline", "Edit" }
+                                            Link { to: Route::AdminPostEdit { id: p.id }, class: "text-brand-400 hover:underline", "Edit" }
                                             DeletePostButton { id: p.id, on_deleted: move |_| posts.restart() }
                                         }
                                     }
@@ -422,7 +422,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                                                     button {
                                                         key: "{m.id}",
                                                         r#type: "button",
-                                                        class: "overflow-hidden rounded border border-white/10 hover:border-sky-400",
+                                                        class: "overflow-hidden rounded border border-white/10 hover:border-brand-400",
                                                         title: "{m.filename}",
                                                         onclick: move |_| { featured.set(url.clone()); show_media_picker.set(false); },
                                                         img { class: "h-16 w-full object-cover", src: "{m.url}", alt: "{m.filename}" }
@@ -489,7 +489,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                 }
                 div { class: "flex items-center gap-3",
                     button {
-                        class: "rounded bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-500",
+                        class: "rounded bg-brand-600 px-4 py-2 text-sm font-medium hover:bg-brand-500",
                         onclick: submit,
                         if editing { "Save changes" } else { "Create post" }
                     }
@@ -554,7 +554,7 @@ pub fn AdminComments() -> Element {
 fn ModButton(id: i64, action: String, label: String, on_done: EventHandler<()>) -> Element {
     rsx! {
         button {
-            class: "text-sky-400 hover:underline",
+            class: "text-brand-400 hover:underline",
             onclick: move |_| {
                 let action = action.clone();
                 spawn(async move {
@@ -622,7 +622,7 @@ pub fn AdminMedia() -> Element {
             h1 { class: "mb-6 text-2xl font-bold", "Media library" }
             div { class: "mb-6 flex items-center gap-3",
                 input { id: "mediafile", r#type: "file", accept: "image/*", class: "text-sm" }
-                button { class: "rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500", onclick: upload, "Upload" }
+                button { class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", onclick: upload, "Upload" }
                 if !msg().is_empty() { span { class: "text-sm text-white/60", "{msg}" } }
             }
             match &*media.read() {
@@ -725,7 +725,7 @@ pub fn AdminSettings() -> Element {
                     h2 { class: "mb-3 text-lg font-semibold", "Categories" }
                     div { class: "mb-3 flex gap-2",
                         input { class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm", placeholder: "New category", value: "{new_cat}", oninput: move |e| new_cat.set(e.value()) }
-                        button { class: "rounded bg-sky-600 px-3 text-sm", onclick: add_cat, "Add" }
+                        button { class: "rounded bg-brand-600 px-3 text-sm", onclick: add_cat, "Add" }
                     }
                     if let Some(Ok(list)) = &*cats.read() {
                         ul { class: "space-y-1 text-sm",
@@ -751,7 +751,7 @@ pub fn AdminSettings() -> Element {
                                                     oninput: move |e| edit_cat_name.set(e.value()),
                                                     onkeydown: move |e| if e.key() == Key::Enter { save(()) },
                                                 }
-                                                button { class: "text-xs text-sky-400 hover:underline", onclick: move |_| save(()), "Save" }
+                                                button { class: "text-xs text-brand-400 hover:underline", onclick: move |_| save(()), "Save" }
                                                 button { class: "text-xs text-white/50 hover:underline",
                                                     onclick: move |_| edit_cat.set(None), "Cancel"
                                                 }
@@ -779,7 +779,7 @@ pub fn AdminSettings() -> Element {
                     h2 { class: "mb-3 text-lg font-semibold", "Tags" }
                     div { class: "mb-3 flex gap-2",
                         input { class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm", placeholder: "New tag", value: "{new_tag}", oninput: move |e| new_tag.set(e.value()) }
-                        button { class: "rounded bg-sky-600 px-3 text-sm", onclick: add_tag, "Add" }
+                        button { class: "rounded bg-brand-600 px-3 text-sm", onclick: add_tag, "Add" }
                     }
                     if let Some(Ok(list)) = &*tags.read() {
                         div { class: "flex flex-wrap gap-2",
@@ -805,7 +805,7 @@ pub fn AdminSettings() -> Element {
                                                     oninput: move |e| edit_tag_name.set(e.value()),
                                                     onkeydown: move |e| if e.key() == Key::Enter { save(()) },
                                                 }
-                                                button { class: "text-sky-400", onclick: move |_| save(()), "✓" }
+                                                button { class: "text-brand-400", onclick: move |_| save(()), "✓" }
                                                 button { class: "text-white/50", onclick: move |_| edit_tag.set(None), "✕" }
                                             } else {
                                                 button { class: "hover:underline",

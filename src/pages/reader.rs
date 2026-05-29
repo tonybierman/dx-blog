@@ -192,7 +192,7 @@ fn CommentSection(post_id: i64) -> Element {
                     oninput: move |e| body.set(e.value()),
                 }
                 button {
-                    class: "rounded bg-sky-600 px-4 py-1.5 text-sm font-medium hover:bg-sky-500",
+                    class: "rounded bg-brand-600 px-4 py-1.5 text-sm font-medium hover:bg-brand-500",
                     onclick: submit,
                     "Post comment"
                 }
@@ -448,7 +448,7 @@ pub fn SearchResults(q: String) -> Element {
                     }
                     if !category().is_empty() || !tag().is_empty() || !date_range().is_empty() {
                         button {
-                            class: "text-xs text-sky-400 hover:underline",
+                            class: "text-xs text-brand-400 hover:underline",
                             onclick: move |_| { category.set(String::new()); tag.set(String::new()); date_range.set(String::new()); page.set(1); },
                             "Clear filters"
                         }
@@ -511,7 +511,7 @@ pub fn Subscribe() -> Element {
                         oninput: move |e| email.set(e.value()),
                     }
                     button {
-                        class: "rounded bg-sky-600 px-4 py-2 font-medium hover:bg-sky-500",
+                        class: "rounded bg-brand-600 px-4 py-2 font-medium hover:bg-brand-500",
                         onclick: submit,
                         "Subscribe"
                     }
@@ -546,7 +546,7 @@ pub fn ConfirmSubscription(token: String) -> Element {
                         p { class: "max-w-md text-white/60",
                             "This confirmation link is invalid or has already been used. Try subscribing again."
                         }
-                        Link { to: Route::Subscribe, class: "text-sm text-sky-400 hover:underline", "Subscribe →" }
+                        Link { to: Route::Subscribe, class: "text-sm text-brand-400 hover:underline", "Subscribe →" }
                     },
                     Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
                     None => rsx! { p { class: "text-white/50", "Confirming…" } },

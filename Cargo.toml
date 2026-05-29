@@ -38,6 +38,12 @@ arium-dioxus = { git = "https://github.com/tonybierman/arium", branch = "main", 
 # targets, so not gated behind `server`.
 serde = { version = "1", features = ["derive"] }
 
+# Structured logging. The macros are used in server-side code (server fns,
+# feeds, startup), but the crate compiles on both targets and is already pulled
+# in transitively by `dioxus-logger`, which `dioxus::launch`/`dioxus::serve`
+# initialize as the global subscriber — so no extra setup is needed.
+tracing = "0.1"
+
 # Server-only deps. Enabled by the `server` feature; `dx` does not turn `server`
 # on for the wasm client build, so these never compile for wasm. The sqlx driver
 # is forwarded weakly by the `sqlite`/`postgres` features below.

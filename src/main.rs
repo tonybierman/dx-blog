@@ -175,14 +175,14 @@ fn main() {
         let seed_enabled = matches!(std::env::var("DX_SEED").ok().as_deref(), Some("1"));
         if seed_enabled {
             if let Err(e) = seed::run_if_empty(&pool).await {
-                eprintln!("[seed] WARN: {e}");
+                tracing::warn!(target: "seed", "{e}");
             }
         } else {
-            println!("[seed] skipped (set DX_SEED=1 to seed demo data)");
+            tracing::info!(target: "seed", "skipped (set DX_SEED=1 to seed demo data)");
         }
 
         let mailer = arium_dioxus::Mailer::from_env()?;
-        println!("[startup] mailer backend: {}", mailer.describe());
+        tracing::info!(target: "startup", "mailer backend: {}", mailer.describe());
 
         // SqlMembershipStore is arium's bundled ResourceAuthority over
         // arium_resource_members — register it so per-post role checks resolve.
@@ -220,11 +220,11 @@ fn main() {
         };
         let builder = match arium_dioxus::oauth::github::GithubProvider::from_env()? {
             Some(gh) => {
-                println!("[startup] GitHub OAuth: enabled");
+                tracing::info!(target: "startup", "GitHub OAuth: enabled");
                 builder.oauth_provider(gh)?
             }
             None => {
-                println!("[startup] GitHub OAuth: disabled (set GITHUB_CLIENT_ID + GITHUB_CLIENT_SECRET)");
+                tracing::info!(target: "startup", "GitHub OAuth: disabled (set GITHUB_CLIENT_ID + GITHUB_CLIENT_SECRET)");
                 builder
             }
         };

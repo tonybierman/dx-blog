@@ -1877,6 +1877,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tower-http",
+ "tracing",
 ]
 
 [[package]]

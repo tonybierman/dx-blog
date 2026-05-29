@@ -11,10 +11,13 @@ use arium_dioxus::ui::{Policy, RequirePermission};
 use crate::auth_tokens::{
     ANALYTICS_READ, COMMENTS_MODERATE, POSTS_WRITE, POSTS_WRITE_ANY, SETTINGS_WRITE, USERS_MANAGE,
 };
-use crate::model::{AnalyticsSummary, PostEditData};
+use crate::model::{AnalyticsSummary, HomeLayout, PostEditData};
 use crate::server::admin::*;
 use crate::server::analytics::{analytics_summary, top_posts, top_referrers, views_over_time};
-use crate::server::settings::{get_theme_hue, set_theme_hue, DEFAULT_THEME_HUE};
+use crate::server::settings::{
+    get_home_layout, get_site_tagline, get_site_title, get_theme_hue, set_home_layout,
+    set_site_tagline, set_site_title, set_theme_hue, DEFAULT_THEME_HUE,
+};
 use crate::server::taxonomy::{list_categories, list_tags};
 use crate::Route;
 
@@ -54,6 +57,8 @@ fn AdminShell(active: String, children: Element) -> Element {
                         Link { to: Route::AdminComments, class: nav_class(&active, "comments"), "Comments" }
                         Link { to: Route::AdminUsers, class: nav_class(&active, "users"), "Users" }
                         Link { to: Route::AdminSettings, class: nav_class(&active, "settings"), "Settings" }
+                        Link { to: Route::AdminAppearance, class: nav_class(&active, "appearance"), "Appearance" }
+                        Link { to: Route::AdminTaxonomy, class: nav_class(&active, "taxonomy"), "Taxonomy" }
                         Link { to: Route::AdminAnalytics, class: nav_class(&active, "analytics"), "Analytics" }
                     }
                     Link { to: Route::HomePage, class: "mt-6 block text-xs text-white/40 hover:underline", "← Back to site" }
@@ -809,10 +814,273 @@ fn ThemeSelector() -> Element {
     }
 }
 
+/// Home-layout picker. Lets an admin choose which structural shell the public
+/// home page renders the feed in (see [`HomeLayout`]). Each option shows a small
+/// CSS sketch of the layout; clicking persists it site-wide via `set_home_layout`.
+#[component]
+fn HomeLayoutSelector() -> Element {
+    let saved = use_resource(get_home_layout);
+    let mut current = use_signal(HomeLayout::default);
+    let mut msg = use_signal(String::new);
+
+    // Sync the control to the stored layout once it loads.
+    use_effect(move || {
+        if let Some(Ok(l)) = &*saved.read() {
+            current.set(*l);
+        }
+    });
+
+    rsx! {
+        section { class: "mb-8",
+            h2 { class: "mb-1 text-lg font-semibold", "Home layout" }
+            p { class: "mb-3 text-sm text-white/50",
+                "The structural shell the public home page renders the post feed in. Saves immediately."
+            }
+            div { class: "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4",
+                for layout in HomeLayout::ALL {
+                    button {
+                        key: "{layout.as_key()}",
+                        r#type: "button",
+                        class: if current() == layout {
+                            "flex flex-col items-center gap-2 rounded-lg border border-brand-400 bg-white/[0.04] p-3 text-center"
+                        } else {
+                            "flex flex-col items-center gap-2 rounded-lg border border-white/10 p-3 text-center hover:border-white/40"
+                        },
+                        onclick: move |_| {
+                            current.set(layout);
+                            spawn(async move {
+                                match set_home_layout(layout).await {
+                                    Ok(()) => msg.set(format!("Saved “{}”.", layout.label())),
+                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
+                                }
+                            });
+                        },
+                        {layout_thumb(layout)}
+                        span { class: "text-xs font-medium", "{layout.label()}" }
+                        span { class: "text-[10px] leading-tight text-white/40", "{layout.blurb()}" }
+                    }
+                }
+            }
+            if !msg().is_empty() {
+                p { class: "mt-3 text-xs text-white/50", "{msg}" }
+            }
+        }
+    }
+}
+
+/// A ~96×64px CSS sketch of a layout's shape for the selector. `bar` blocks are
+/// chrome, `cell` is the feed/content, `muted` is secondary regions.
+fn layout_thumb(layout: HomeLayout) -> Element {
+    const BAR: &str = "bg-white/25";
+    const CELL: &str = "bg-brand-500/50";
+    const MUTED: &str = "bg-white/10";
+    const FRAME: &str =
+        "flex h-16 w-24 flex-col gap-0.5 overflow-hidden rounded border border-white/10 bg-black/30 p-1";
+
+    match layout {
+        HomeLayout::HolyGrail => rsx! {
+            div { class: "{FRAME}",
+                div { class: "h-1.5 {BAR}" }
+                div { class: "flex flex-1 gap-0.5",
+                    div { class: "w-2 {MUTED}" }
+                    div { class: "flex-1 {CELL}" }
+                    div { class: "w-2 {MUTED}" }
+                }
+                div { class: "h-1.5 {BAR}" }
+            }
+        },
+        HomeLayout::StickySidebar => rsx! {
+            div { class: "{FRAME}",
+                div { class: "h-1.5 {BAR}" }
+                div { class: "flex flex-1 gap-0.5",
+                    div { class: "w-3 {MUTED}" }
+                    div { class: "flex-1 {CELL}" }
+                }
+            }
+        },
+        HomeLayout::SplitScreen => rsx! {
+            div { class: "{FRAME}",
+                div { class: "flex flex-1 gap-0.5",
+                    div { class: "flex-1 bg-white/30" }
+                    div { class: "flex-1 {CELL}" }
+                }
+            }
+        },
+        HomeLayout::FullBleed => rsx! {
+            div { class: "{FRAME}",
+                div { class: "flex-1 {CELL}" }
+            }
+        },
+        HomeLayout::Drawer => rsx! {
+            div { class: "relative {FRAME}",
+                div { class: "h-1.5 {BAR}" }
+                div { class: "flex-1 {CELL}" }
+                div { class: "absolute inset-y-1 left-1 w-3 rounded-sm bg-white/40" }
+            }
+        },
+        HomeLayout::MegaMenu => rsx! {
+            div { class: "{FRAME}",
+                div { class: "h-1.5 {BAR}" }
+                div { class: "h-3 bg-white/15" }
+                div { class: "flex-1 {CELL}" }
+            }
+        },
+        HomeLayout::BentoGrid => rsx! {
+            div { class: "{FRAME}",
+                div { class: "grid flex-1 grid-cols-3 grid-rows-2 gap-0.5",
+                    div { class: "col-span-2 row-span-2 {CELL}" }
+                    div { class: "{MUTED}" }
+                    div { class: "{MUTED}" }
+                }
+            }
+        },
+        HomeLayout::Masonry => rsx! {
+            div { class: "{FRAME}",
+                div { class: "flex flex-1 gap-0.5",
+                    div { class: "flex flex-1 flex-col gap-0.5",
+                        div { class: "h-4 {CELL}" }
+                        div { class: "flex-1 {MUTED}" }
+                    }
+                    div { class: "flex flex-1 flex-col gap-0.5",
+                        div { class: "h-6 {MUTED}" }
+                        div { class: "flex-1 {CELL}" }
+                    }
+                    div { class: "flex flex-1 flex-col gap-0.5",
+                        div { class: "h-3 {CELL}" }
+                        div { class: "flex-1 {MUTED}" }
+                    }
+                }
+            }
+        },
+        HomeLayout::CardGrid => rsx! {
+            div { class: "{FRAME}",
+                div { class: "grid flex-1 grid-cols-3 grid-rows-2 gap-0.5",
+                    for _ in 0..6 {
+                        div { class: "{CELL}" }
+                    }
+                }
+            }
+        },
+        HomeLayout::Editorial => rsx! {
+            div { class: "{FRAME} items-center",
+                div { class: "h-1.5 w-12 {BAR}" }
+                div { class: "mt-0.5 flex w-full flex-1 justify-center gap-0.5",
+                    div { class: "w-10 {CELL}" }
+                    div { class: "w-3 {MUTED}" }
+                }
+            }
+        },
+        HomeLayout::HeroScroll => rsx! {
+            div { class: "{FRAME}",
+                div { class: "h-8 bg-white/30" }
+                div { class: "flex-1 {CELL}" }
+            }
+        },
+        HomeLayout::ScrollSticky => rsx! {
+            div { class: "{FRAME}",
+                div { class: "flex flex-1 gap-0.5",
+                    div { class: "flex flex-1 flex-col gap-0.5",
+                        div { class: "h-2 {CELL}" }
+                        div { class: "h-2 {CELL}" }
+                        div { class: "h-2 {CELL}" }
+                    }
+                    div { class: "w-8 {MUTED}" }
+                }
+            }
+        },
+    }
+}
+
+// ---------------------------------------------------------------- settings (site)
+
+/// Core site settings: the display title and tagline shown in the chrome. Theme
+/// and home layout live under Appearance; categories and tags under Taxonomy.
+#[component]
+pub fn AdminSettings() -> Element {
+    let title = use_resource(get_site_title);
+    let tagline = use_resource(get_site_tagline);
+    let mut title_draft = use_signal(String::new);
+    let mut tagline_draft = use_signal(String::new);
+    let mut saved = use_signal(|| false);
+
+    // Seed the drafts from the stored values once they load.
+    use_effect(move || {
+        if let Some(Ok(t)) = &*title.read() {
+            title_draft.set(t.clone());
+        }
+    });
+    use_effect(move || {
+        if let Some(Ok(t)) = &*tagline.read() {
+            tagline_draft.set(t.clone());
+        }
+    });
+
+    let save = move |_| {
+        let t = title_draft();
+        let g = tagline_draft();
+        spawn(async move {
+            let ok = set_site_title(t).await.is_ok() && set_site_tagline(g).await.is_ok();
+            saved.set(ok);
+        });
+    };
+
+    rsx! {
+        AdminShell { active: "settings".to_string(),
+            h1 { class: "mb-6 text-2xl font-bold", "Site settings" }
+            section { class: "max-w-xl space-y-4",
+                div {
+                    label { class: "mb-1 block text-sm font-medium", "Site title" }
+                    input {
+                        class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
+                        placeholder: "dx-blog",
+                        value: "{title_draft}",
+                        oninput: move |e| { title_draft.set(e.value()); saved.set(false); },
+                    }
+                    p { class: "mt-1 text-xs text-white/40", "Shown as the brand in the header and footer." }
+                }
+                div {
+                    label { class: "mb-1 block text-sm font-medium", "Site tagline" }
+                    input {
+                        class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
+                        placeholder: "A short subtitle for your site",
+                        value: "{tagline_draft}",
+                        oninput: move |e| { tagline_draft.set(e.value()); saved.set(false); },
+                    }
+                    p { class: "mt-1 text-xs text-white/40", "Shown beside the title in the header." }
+                }
+                div { class: "flex items-center gap-3",
+                    button {
+                        class: "rounded bg-brand-600 px-4 py-2 text-sm font-medium hover:bg-brand-500",
+                        onclick: save,
+                        "Save"
+                    }
+                    if saved() {
+                        span { class: "text-sm text-green-400", "Saved" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- settings (appearance)
+
+/// Visual settings: the accent theme and the public home-page layout.
+#[component]
+pub fn AdminAppearance() -> Element {
+    rsx! {
+        AdminShell { active: "appearance".to_string(),
+            h1 { class: "mb-6 text-2xl font-bold", "Appearance" }
+            ThemeSelector {}
+            HomeLayoutSelector {}
+        }
+    }
+}
+
 // ---------------------------------------------------------------- settings (taxonomy)
 
 #[component]
-pub fn AdminSettings() -> Element {
+pub fn AdminTaxonomy() -> Element {
     let mut cats = use_resource(list_categories);
     let mut tags = use_resource(list_tags);
     let mut new_cat = use_signal(String::new);
@@ -849,9 +1117,8 @@ pub fn AdminSettings() -> Element {
     };
 
     rsx! {
-        AdminShell { active: "settings".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Site settings" }
-            ThemeSelector {}
+        AdminShell { active: "taxonomy".to_string(),
+            h1 { class: "mb-6 text-2xl font-bold", "Taxonomy" }
             div { class: "grid gap-8 md:grid-cols-2",
                 section {
                     h2 { class: "mb-3 text-lg font-semibold", "Categories" }

@@ -4,6 +4,8 @@
 
 use dioxus::prelude::*;
 
+use crate::model::HomeLayout;
+
 #[cfg(feature = "server")]
 use crate::auth_tokens::SETTINGS_WRITE;
 #[cfg(feature = "server")]
@@ -39,6 +41,99 @@ pub async fn set_theme_hue(hue: i64) -> Result<()> {
          ON CONFLICT (key) DO UPDATE SET value = excluded.value",
     )
     .bind(hue.to_string())
+    .execute(&db.0)
+    .await
+    .map_err(sfe)?;
+    Ok(())
+}
+
+/// Default site title — the hard-coded brand used before an admin sets one.
+pub const DEFAULT_SITE_TITLE: &str = "dx-blog";
+
+/// The site's display title (shown in the header/footer brand). Public — chrome
+/// reads it on every page. Falls back to [`DEFAULT_SITE_TITLE`] when unset.
+#[get("/api/site-title", db: DbExtension)]
+pub async fn get_site_title() -> Result<String> {
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'site_title'")
+            .fetch_optional(&db.0)
+            .await
+            .map_err(sfe)?;
+    let title = stored
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_SITE_TITLE.to_string());
+    Ok(title)
+}
+
+/// Set the site title (admin only).
+#[post("/api/site-title/set", auth: arium_dioxus::auth::Session, db: DbExtension)]
+pub async fn set_site_title(title: String) -> Result<()> {
+    require_perm(&auth, SETTINGS_WRITE)?;
+    sqlx::query(
+        "INSERT INTO site_settings (key, value) VALUES ('site_title', ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(title.trim())
+    .execute(&db.0)
+    .await
+    .map_err(sfe)?;
+    Ok(())
+}
+
+/// The site's tagline (a short subtitle shown beside the brand). Public — chrome
+/// reads it on every page. Empty string when unset.
+#[get("/api/site-tagline", db: DbExtension)]
+pub async fn get_site_tagline() -> Result<String> {
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'site_tagline'")
+            .fetch_optional(&db.0)
+            .await
+            .map_err(sfe)?;
+    Ok(stored.map(|s| s.trim().to_string()).unwrap_or_default())
+}
+
+/// Set the site tagline (admin only).
+#[post("/api/site-tagline/set", auth: arium_dioxus::auth::Session, db: DbExtension)]
+pub async fn set_site_tagline(tagline: String) -> Result<()> {
+    require_perm(&auth, SETTINGS_WRITE)?;
+    sqlx::query(
+        "INSERT INTO site_settings (key, value) VALUES ('site_tagline', ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(tagline.trim())
+    .execute(&db.0)
+    .await
+    .map_err(sfe)?;
+    Ok(())
+}
+
+/// The layout the public home page renders the post feed in. Public — the home
+/// page reads it on every load. Falls back to the default (Holy Grail) when
+/// unset or when an unrecognized key is stored.
+#[get("/api/home-layout", db: DbExtension)]
+pub async fn get_home_layout() -> Result<HomeLayout> {
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'home_layout'")
+            .fetch_optional(&db.0)
+            .await
+            .map_err(sfe)?;
+    let layout = stored
+        .and_then(|s| HomeLayout::from_key(s.trim()))
+        .unwrap_or_default();
+    Ok(layout)
+}
+
+/// Set the home-page layout (admin only). Takes an argument, so this is a POST
+/// (a GET request can't carry a body).
+#[post("/api/home-layout/set", auth: arium_dioxus::auth::Session, db: DbExtension)]
+pub async fn set_home_layout(layout: HomeLayout) -> Result<()> {
+    require_perm(&auth, SETTINGS_WRITE)?;
+    sqlx::query(
+        "INSERT INTO site_settings (key, value) VALUES ('home_layout', ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(layout.as_key())
     .execute(&db.0)
     .await
     .map_err(sfe)?;

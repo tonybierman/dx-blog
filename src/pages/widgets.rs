@@ -130,7 +130,7 @@ pub fn RecentComments() -> Element {
 
 /// A single post summary card linking to the detail page.
 #[component]
-pub fn PostCardView(card: PostCard) -> Element {
+pub fn PostCardView(card: PostCard, #[props(default)] fill: bool) -> Element {
     let PostCard {
         title,
         slug,
@@ -143,7 +143,9 @@ pub fn PostCardView(card: PostCard) -> Element {
     } = card;
 
     rsx! {
-        article { class: "overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]",
+        article {
+            class: "overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]",
+            class: if fill { "flex h-full flex-col" },
             if let Some(img) = featured_image_url {
                 img { class: "h-40 w-full object-cover", src: "{img}", alt: "{title}" }
             }

@@ -25,8 +25,8 @@ mod seed;
 mod server;
 
 use pages::admin::{
-    AdminAnalytics, AdminComments, AdminDashboard, AdminMedia, AdminPostEdit, AdminPostList,
-    AdminPostNew, AdminSettings, AdminUsers,
+    AdminAnalytics, AdminAppearance, AdminComments, AdminDashboard, AdminMedia, AdminPostEdit,
+    AdminPostList, AdminPostNew, AdminSettings, AdminTaxonomy, AdminUsers,
 };
 use pages::auth::{
     AccountPage, ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage,
@@ -98,6 +98,10 @@ pub enum Route {
     AdminUsers,
     #[route("/admin/settings")]
     AdminSettings,
+    #[route("/admin/appearance")]
+    AdminAppearance,
+    #[route("/admin/taxonomy")]
+    AdminTaxonomy,
     #[route("/admin/analytics")]
     AdminAnalytics,
 
@@ -161,6 +165,21 @@ fn main() {
             Arc::new(arium_dioxus::SqlMembershipStore);
 
         let builder = arium_dioxus::AuthConfig::builder(pool, mailer).resource_authority(authority);
+        // arium's default rate limit (burst 30, 1 req/s per IP) is far too tight
+        // here: the limiter fronts *every* request, so one page load — dozens of
+        // per-component CSS assets + the wasm bundle + a burst of feed/sidebar
+        // server fns, all from a single dev IP — drains the burst and then 429s
+        // the page's own data calls. Relax it; set DX_RATE_LIMIT=off to disable.
+        let builder = {
+            let rl = match std::env::var("DX_RATE_LIMIT").ok().as_deref() {
+                Some("off") => None,
+                _ => Some(arium_dioxus::RateLimitConfig {
+                    burst: 4096,
+                    per_second: 256,
+                }),
+            };
+            builder.rate_limit(rl)
+        };
         let builder = match arium_dioxus::oauth::github::GithubProvider::from_env()? {
             Some(gh) => {
                 println!("[startup] GitHub OAuth: enabled");

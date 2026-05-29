@@ -11,12 +11,14 @@ Server-rendered and hydrated, SQLite-backed, styled with Tailwind v4.
 - Full-text search with category / tag / date facets
 - Per-post pages with comments, author bios, and related metadata
 - Loading skeletons and empty states; responsive layouts (holy-grail, bento, masonry, full-bleed)
+- Admin-selectable home-page layout — 12 structural kinds (holy-grail, bento, masonry, editorial, hero, and more)
 
 **Authoring & admin**
 - Markdown editor with debounced live preview; HTML is rendered and sanitized server-side
 - Draft / published / archived workflow, with author-facing draft preview
 - Media library with a featured-image picker
-- Admin dashboard: sortable/filterable post table, comment moderation, users, settings
+- Admin dashboard: sortable/filterable post table, comment moderation, users
+- Settings split into Settings (site title + tagline), Appearance (theme + home layout), and Taxonomy (categories + tags)
 - Analytics: view counts, 30-day views-over-time, and top referrers
 - One-knob theming — the whole accent palette is driven by a single brand hue
 
@@ -40,61 +42,11 @@ Server-rendered and hydrated, SQLite-backed, styled with Tailwind v4.
 | Styling | Tailwind CSS v4 |
 | Markdown | `pulldown-cmark` + `ammonia` sanitizer |
 
-## Getting started
+## Documentation
 
-### Prerequisites
-
-- A recent stable Rust toolchain and the wasm target: `rustup target add wasm32-unknown-unknown`
-- The Dioxus CLI: `cargo install dioxus-cli`
-
-> Auth/authz comes from [arium](https://github.com/tonybierman/arium), pulled in as a git
-> dependency — Cargo fetches it automatically, no separate checkout needed.
-
-### Run
-
-```sh
-cp .env.example .env      # all values are optional in dev
-dx serve                  # builds the client, compiles tailwind.css, and starts the server
-```
-
-The app comes up at <http://localhost:8080>. On a fresh database it auto-seeds demo
-content and three accounts (all password `password`):
-
-```
-admin@example.com   ada@example.com   linus@example.com
-```
-
-> `assets/tailwind.css` is a generated artifact (ignored by git) — `dx serve` / `dx build`
-> regenerate it from `tailwind.css`. To build it by hand: `npx @tailwindcss/cli -i tailwind.css -o assets/tailwind.css`.
-
-## Configuration
-
-All configuration is via environment variables; see [`.env.example`](.env.example) for the
-full list. Common ones:
-
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | SQLite location (defaults to `./data/blog.db`) |
-| `SITE_URL` | Canonical origin for absolute URLs in the sitemap and feed |
-| `SITE_TITLE` | Title shown in the Atom feed |
-| `DX_AUTH_SKIP_EMAIL_VERIFICATION` | Skip the email round-trip in dev |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | Enable GitHub OAuth |
-| `SMTP_*` | Outgoing mail (password reset, verification, subscriptions) |
-
-## Development
-
-The crate compiles to two targets that a plain `cargo check` can't cover at once. Check each:
-
-```sh
-cargo check --no-default-features --features server,sqlite              # server
-cargo check --no-default-features --features web --target wasm32-unknown-unknown  # client
-```
-
-Server-side tests run with:
-
-```sh
-cargo test --no-default-features --features server,sqlite
-```
+- [Getting started](docs/getting-started.md) — prerequisites and running locally
+- [Configuration](docs/configuration.md) — environment variables
+- [Development](docs/development.md) — checking the two build targets and running tests
 
 ## License
 

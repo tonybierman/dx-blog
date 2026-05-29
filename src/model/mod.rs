@@ -179,3 +179,114 @@ impl PostFeed {
 
 /// Default page size for listings.
 pub const PER_PAGE: i64 = 10;
+
+/// Which structural/marketing layout the public home page renders the post feed
+/// in. Chosen by an admin in Settings and persisted in `site_settings`. The 12
+/// variants are the dioxus-mcp registry's structural + marketing layout kinds
+/// (excluding `admin_console`, which is admin chrome). The wire form is the
+/// stable snake_case key (`as_key`); never serialize the enum's Rust name.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
+pub enum HomeLayout {
+    /// Header/footer with optional left + right sidebars flanking the feed.
+    #[default]
+    HolyGrail,
+    /// A pinned side nav beside a scrolling feed.
+    StickySidebar,
+    /// Two equal panes: an inverted intro pane and the feed.
+    SplitScreen,
+    /// Edge-to-edge feed with no persistent chrome.
+    FullBleed,
+    /// Off-canvas nav panel toggled over a scrim above the feed.
+    Drawer,
+    /// Top bar with a drop-down mega panel above the feed.
+    MegaMenu,
+    /// Asymmetric tile grid of posts.
+    BentoGrid,
+    /// Staggered multi-column (CSS columns) feed.
+    Masonry,
+    /// Uniform responsive card grid.
+    CardGrid,
+    /// Centered reading measure with an asymmetric aside.
+    Editorial,
+    /// Full-viewport hero above the fold, feed below.
+    HeroScroll,
+    /// Scrolling posts beside a panel that pins in place.
+    ScrollSticky,
+}
+
+impl HomeLayout {
+    /// Every variant, in admin-display order. Source of truth for the selector.
+    pub const ALL: [HomeLayout; 12] = [
+        HomeLayout::HolyGrail,
+        HomeLayout::StickySidebar,
+        HomeLayout::SplitScreen,
+        HomeLayout::FullBleed,
+        HomeLayout::Drawer,
+        HomeLayout::MegaMenu,
+        HomeLayout::BentoGrid,
+        HomeLayout::Masonry,
+        HomeLayout::CardGrid,
+        HomeLayout::Editorial,
+        HomeLayout::HeroScroll,
+        HomeLayout::ScrollSticky,
+    ];
+
+    /// Stable snake_case key for DB storage and the registry kind name.
+    pub fn as_key(&self) -> &'static str {
+        match self {
+            HomeLayout::HolyGrail => "holy_grail",
+            HomeLayout::StickySidebar => "sticky_sidebar",
+            HomeLayout::SplitScreen => "split_screen",
+            HomeLayout::FullBleed => "full_bleed",
+            HomeLayout::Drawer => "drawer",
+            HomeLayout::MegaMenu => "mega_menu",
+            HomeLayout::BentoGrid => "bento_grid",
+            HomeLayout::Masonry => "masonry",
+            HomeLayout::CardGrid => "card_grid",
+            HomeLayout::Editorial => "editorial",
+            HomeLayout::HeroScroll => "hero_scroll",
+            HomeLayout::ScrollSticky => "scroll_sticky",
+        }
+    }
+
+    /// Parse a stored key back into a layout; `None` for unknown keys.
+    pub fn from_key(key: &str) -> Option<HomeLayout> {
+        HomeLayout::ALL.into_iter().find(|l| l.as_key() == key)
+    }
+
+    /// Human label for the admin selector.
+    pub fn label(&self) -> &'static str {
+        match self {
+            HomeLayout::HolyGrail => "Holy Grail",
+            HomeLayout::StickySidebar => "Sticky Sidebar",
+            HomeLayout::SplitScreen => "Split Screen",
+            HomeLayout::FullBleed => "Full-bleed",
+            HomeLayout::Drawer => "Drawer",
+            HomeLayout::MegaMenu => "Mega Menu",
+            HomeLayout::BentoGrid => "Bento Grid",
+            HomeLayout::Masonry => "Masonry",
+            HomeLayout::CardGrid => "Card Grid",
+            HomeLayout::Editorial => "Editorial",
+            HomeLayout::HeroScroll => "Hero",
+            HomeLayout::ScrollSticky => "Sticky Sections",
+        }
+    }
+
+    /// One-line description shown under the label in the selector.
+    pub fn blurb(&self) -> &'static str {
+        match self {
+            HomeLayout::HolyGrail => "Feed flanked by left + right sidebars.",
+            HomeLayout::StickySidebar => "Pinned side nav beside a scrolling feed.",
+            HomeLayout::SplitScreen => "Inverted intro pane next to the feed.",
+            HomeLayout::FullBleed => "Edge-to-edge feed, no chrome.",
+            HomeLayout::Drawer => "Off-canvas nav toggled over the feed.",
+            HomeLayout::MegaMenu => "Top bar with a drop-down mega panel.",
+            HomeLayout::BentoGrid => "Asymmetric tile grid of posts.",
+            HomeLayout::Masonry => "Staggered multi-column columns.",
+            HomeLayout::CardGrid => "Uniform responsive card grid.",
+            HomeLayout::Editorial => "Centered reading measure + aside.",
+            HomeLayout::HeroScroll => "Full-screen hero, feed below.",
+            HomeLayout::ScrollSticky => "Scrolling posts beside a pinned panel.",
+        }
+    }
+}

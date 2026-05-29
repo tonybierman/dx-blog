@@ -40,7 +40,7 @@ pub type MailExtension = axum::Extension<arium_dioxus::Mailer>;
 /// found", …) build a `ServerFnError::new(...)` directly instead of routing
 /// through `sfe`.
 pub fn sfe<E: std::fmt::Display>(e: E) -> ServerFnError {
-    eprintln!("[server] error: {e}");
+    tracing::error!(target: "server", "{e}");
     ServerFnError::new("Something went wrong. Please try again.")
 }
 

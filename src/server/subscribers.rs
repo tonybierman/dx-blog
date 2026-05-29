@@ -88,7 +88,7 @@ pub async fn subscribe(email: String) -> Result<()> {
          <p style=\"color:#888\">If you didn't request this, you can ignore this message.</p>"
     );
     if let Err(err) = mail.0.send(&email, subject, &text, Some(&html)).await {
-        eprintln!("[mail] WARN: failed to send subscription confirmation: {err}");
+        tracing::warn!(target: "mail", "failed to send subscription confirmation: {err}");
     }
 
     Ok(())

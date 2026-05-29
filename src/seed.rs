@@ -30,7 +30,7 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
     if posts > 0 {
         return Ok(());
     }
-    println!("[seed] empty blog — seeding demo data");
+    tracing::info!(target: "seed", "empty blog — seeding demo data");
 
     // --- Users -------------------------------------------------------------
     // The admin is fully privileged, so it must NEVER get the public, hardcoded
@@ -43,9 +43,10 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
             let generated: String = sqlx::query_scalar("SELECT lower(hex(randomblob(16)))")
                 .fetch_one(pool)
                 .await?;
-            println!(
-                "[seed] generated admin password for admin@example.com: {generated}\n\
-                 [seed]   (set DX_SEED_ADMIN_PASSWORD to choose your own; shown only once)"
+            tracing::info!(
+                target: "seed",
+                "generated admin password for admin@example.com: {generated}\n\
+                   (set DX_SEED_ADMIN_PASSWORD to choose your own; shown only once)"
             );
             generated
         }
@@ -69,9 +70,10 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
             let generated: String = sqlx::query_scalar("SELECT lower(hex(randomblob(16)))")
                 .fetch_one(pool)
                 .await?;
-            println!(
-                "[seed] generated demo-author password (ada@/linus@example.com): {generated}\n\
-                 [seed]   (set DX_SEED_DEMO_PASSWORD to choose your own; shown only once)"
+            tracing::info!(
+                target: "seed",
+                "generated demo-author password (ada@/linus@example.com): {generated}\n\
+                   (set DX_SEED_DEMO_PASSWORD to choose your own; shown only once)"
             );
             generated
         }
@@ -344,8 +346,9 @@ the price ticks and the session change flips green/red.
             .await?;
     }
 
-    println!(
-        "[seed] done: 3 users, 4 categories, 10 tags, 25 posts (incl. 5 Rust MDX demos), \
+    tracing::info!(
+        target: "seed",
+        "done: 3 users, 4 categories, 10 tags, 25 posts (incl. 5 Rust MDX demos), \
          30 comments, 5 subscribers"
     );
     Ok(())

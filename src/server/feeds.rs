@@ -113,7 +113,7 @@ pub async fn sitemap_handler(db: DbExtension) -> Result<impl IntoResponse, Statu
     .fetch_all(pool)
     .await
     .map_err(|e| {
-        eprintln!("[sitemap] WARN: posts query failed: {e}");
+        tracing::warn!(target: "sitemap", "posts query failed: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     for (slug, lastmod) in posts {
@@ -129,7 +129,7 @@ pub async fn sitemap_handler(db: DbExtension) -> Result<impl IntoResponse, Statu
             .fetch_all(pool)
             .await
             .map_err(|e| {
-                eprintln!("[sitemap] WARN: {prefix} slugs query failed: {e}");
+                tracing::warn!(target: "sitemap", "{prefix} slugs query failed: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
         for slug in slugs {
@@ -150,7 +150,7 @@ pub async fn sitemap_handler(db: DbExtension) -> Result<impl IntoResponse, Statu
     .fetch_all(pool)
     .await
     .map_err(|e| {
-        eprintln!("[sitemap] WARN: authors query failed: {e}");
+        tracing::warn!(target: "sitemap", "authors query failed: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     for username in authors {
@@ -214,7 +214,7 @@ pub async fn atom_handler(db: DbExtension) -> Result<impl IntoResponse, StatusCo
     .fetch_all(pool)
     .await
     .map_err(|e| {
-        eprintln!("[feed] WARN: posts query failed: {e}");
+        tracing::warn!(target: "feed", "posts query failed: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 

@@ -21,7 +21,7 @@ pub fn CategoryList() -> Element {
                 Some(Ok(list)) if !list.is_empty() => rsx! {
                     ul { class: "space-y-1",
                         for c in list.clone() {
-                            li {
+                            li { key: "{c.id}",
                                 Link {
                                     to: Route::CategoryFeed { slug: c.slug.clone() },
                                     class: "text-white/60 hover:text-white hover:underline",

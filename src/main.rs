@@ -122,7 +122,7 @@ fn main() {
 
         // Dev SQLite DB under ./data unless DATABASE_URL is set.
         let pool = {
-            use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
             use std::str::FromStr;
 
             // SQLite creates the file but not its parent dir.
@@ -133,7 +133,11 @@ fn main() {
                 _ => SqliteConnectOptions::new()
                     .filename(concat!(env!("CARGO_MANIFEST_DIR"), "/data/blog.db"))
                     .create_if_missing(true),
-            };
+            }
+            // WAL lets readers proceed concurrently with a writer — important here
+            // because every page view writes a post_views row while feed/sidebar
+            // reads run; in the default rollback journal those writers block readers.
+            .journal_mode(SqliteJournalMode::Wal);
             SqlitePoolOptions::new()
                 .max_connections(20)
                 .connect_with(connect_opts)
@@ -152,8 +156,18 @@ fn main() {
             .await?;
 
         // Auto-seed demo data on a fresh database (no-op once posts exist).
-        if let Err(e) = seed::run_if_empty(&pool).await {
-            eprintln!("[seed] WARN: {e}");
+        // GATED: seeding plants a fully-privileged admin with a public, hardcoded
+        // password ("password"), so it must never run on a production deploy. Only
+        // seed in a debug build, or when DX_SEED=1 is set explicitly (mirrors the
+        // DX_RATE_LIMIT opt-out below). A release build with DX_SEED unset never seeds.
+        let seed_enabled = cfg!(debug_assertions)
+            || matches!(std::env::var("DX_SEED").ok().as_deref(), Some("1"));
+        if seed_enabled {
+            if let Err(e) = seed::run_if_empty(&pool).await {
+                eprintln!("[seed] WARN: {e}");
+            }
+        } else {
+            println!("[seed] skipped (release build; set DX_SEED=1 to seed demo data)");
         }
 
         let mailer = arium_dioxus::Mailer::from_env()?;
@@ -236,6 +250,12 @@ fn App() -> Element {
     // baked into tailwind.css. Until it resolves, the compiled-in default
     // applies, so a default-themed site shows no flash.
     let theme_hue = use_resource(crate::server::settings::get_theme_hue);
+
+    // Site title/tagline resolved once and shared with SiteHeader + SiteFooter via
+    // context, so the chrome doesn't fetch the branding twice per page.
+    let site_chrome: crate::layouts::SiteChrome =
+        use_resource(crate::server::settings::get_site_meta);
+    use_context_provider(|| site_chrome);
 
     rsx! {
         document::Link { rel: "icon", href: FAVICON }

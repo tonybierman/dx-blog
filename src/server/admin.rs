@@ -11,7 +11,10 @@ use crate::auth_tokens::{
     COMMENTS_MODERATE, MEDIA_UPLOAD, POSTS_WRITE, POSTS_WRITE_ANY, SETTINGS_WRITE,
 };
 #[cfg(feature = "server")]
-use crate::server::{render_markdown, require_perm, sfe, unique_slug, DbExtension};
+use crate::server::{
+    render_markdown, require_perm, sfe, unique_slug, DbExtension, POST_CARD_COLUMNS,
+    POST_CARD_JOINS,
+};
 
 // ---------------------------------------------------------------- helper
 
@@ -57,7 +60,7 @@ pub async fn create_post(
     status: String,
 ) -> Result<i64> {
     let uid = require_perm(&auth, POSTS_WRITE)?;
-    let slug = unique_slug(&db.0, &title).await.map_err(sfe)?;
+    let slug = unique_slug(&db.0, "posts", &title).await.map_err(sfe)?;
     let body_html = render_markdown(&body_md);
 
     let post_id: i64 = sqlx::query_scalar(
@@ -160,6 +163,18 @@ pub async fn delete_post(id: i64) -> Result<()> {
         .execute(&db.0)
         .await
         .map_err(sfe)?;
+    // Recorded views for this post — otherwise they pile up unbounded.
+    sqlx::query("DELETE FROM post_views WHERE post_id = ?")
+        .bind(id)
+        .execute(&db.0)
+        .await
+        .map_err(sfe)?;
+    // Per-post ownership/membership rows (kind='post'); otherwise stale grants linger.
+    sqlx::query("DELETE FROM arium_resource_members WHERE kind = 'post' AND resource_id = ?")
+        .bind(id)
+        .execute(&db.0)
+        .await
+        .map_err(sfe)?;
     sqlx::query("DELETE FROM posts WHERE id = ?")
         .bind(id)
         .execute(&db.0)
@@ -197,19 +212,9 @@ pub async fn admin_list_posts(
     };
 
     let sql = format!(
-        r#"
-        SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
-               p.author_id,
-               COALESCE(u.display_name, u.username) AS author_name,
-               c.name AS category_name,
-               p.status, p.published_at
-        FROM posts p
-        JOIN users u ON u.id = p.author_id
-        LEFT JOIN categories c ON c.id = p.category_id
-        WHERE (? = 1 OR p.author_id = ?)
-          AND (? IS NULL OR p.status = ?)
-        ORDER BY {order_by}
-        "#
+        "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} \
+         WHERE (? = 1 OR p.author_id = ?) AND (? IS NULL OR p.status = ?) \
+         ORDER BY {order_by}"
     );
 
     let rows = sqlx::query_as::<_, PostCard>(&sql)
@@ -350,7 +355,7 @@ pub async fn delete_comment(id: i64) -> Result<()> {
 #[post("/api/admin/categories/create", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn create_category(name: String, description: Option<String>) -> Result<Category> {
     require_perm(&auth, SETTINGS_WRITE)?;
-    let slug = unique_slug_generic(&db.0, "categories", &name).await?;
+    let slug = unique_slug(&db.0, "categories", &name).await.map_err(sfe)?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO categories (name, slug, description) VALUES (?, ?, ?) RETURNING id",
     )
@@ -400,7 +405,7 @@ pub async fn rename_category(id: i64, name: String) -> Result<()> {
 #[post("/api/admin/tags/create", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn create_tag(name: String) -> Result<Tag> {
     require_perm(&auth, SETTINGS_WRITE)?;
-    let slug = unique_slug_generic(&db.0, "tags", &name).await?;
+    let slug = unique_slug(&db.0, "tags", &name).await.map_err(sfe)?;
     let id: i64 = sqlx::query_scalar("INSERT INTO tags (name, slug) VALUES (?, ?) RETURNING id")
         .bind(&name)
         .bind(&slug)
@@ -444,38 +449,6 @@ pub async fn rename_tag(id: i64, name: String) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "server")]
-async fn unique_slug_generic(
-    pool: &arium_dioxus::pool::Pool,
-    table: &str,
-    name: &str,
-) -> std::result::Result<String, ServerFnError> {
-    let base = {
-        let s = slug::slugify(name);
-        if s.is_empty() {
-            "item".to_string()
-        } else {
-            s
-        }
-    };
-    let mut candidate = base.clone();
-    let mut n = 2;
-    loop {
-        // table is an internal constant ("categories"/"tags"), never user input.
-        let sql = format!("SELECT id FROM {table} WHERE slug = ?");
-        let exists: Option<i64> = sqlx::query_scalar(&sql)
-            .bind(&candidate)
-            .fetch_optional(pool)
-            .await
-            .map_err(sfe)?;
-        if exists.is_none() {
-            return Ok(candidate);
-        }
-        candidate = format!("{base}-{n}");
-        n += 1;
-    }
-}
-
 // ---------------------------------------------------------------- media
 
 #[get("/api/admin/media", auth: arium_dioxus::auth::Session, db: DbExtension)]
@@ -496,9 +469,36 @@ pub async fn upload_media(filename: String, data_base64: String) -> Result<Media
     use base64::{engine::general_purpose::STANDARD, Engine};
 
     let uid = require_perm(&auth, MEDIA_UPLOAD)?;
+
+    // Allow-list raster image extensions only. Uploads are served from the app
+    // origin by ServeDir, which derives Content-Type from the extension — so an
+    // `.html` or scripted `.svg` would be served as live, same-origin content and
+    // execute JS on the site. `accept="image/*"` in the form is a client-side hint
+    // only; this server-side check is the real gate. SVG is intentionally excluded
+    // (it can carry <script>).
+    const ALLOWED_EXT: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "avif"];
+    let ext_ok = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .is_some_and(|e| ALLOWED_EXT.contains(&e.as_str()));
+    if !ext_ok {
+        return Err(ServerFnError::new(
+            "Unsupported file type. Allowed: png, jpg, jpeg, gif, webp, avif.",
+        )
+        .into());
+    }
+
     let bytes = STANDARD
         .decode(data_base64.as_bytes())
         .map_err(|_| ServerFnError::new("Invalid file data."))?;
+
+    // Cap the decoded size (10 MiB) so a holder of the upload token can't fill the
+    // disk with one request.
+    const MAX_BYTES: usize = 10 * 1024 * 1024;
+    if bytes.len() > MAX_BYTES {
+        return Err(ServerFnError::new("File too large (max 10 MB).").into());
+    }
 
     let safe: String = filename
         .chars()
@@ -551,10 +551,25 @@ pub async fn upload_media(filename: String, data_base64: String) -> Result<Media
 #[post("/api/admin/media/delete", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn delete_media(id: i64) -> Result<()> {
     require_perm(&auth, MEDIA_UPLOAD)?;
+
+    // Grab the stored url first so we can unlink the file after dropping the row.
+    let url: Option<String> = sqlx::query_scalar("SELECT url FROM media WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&db.0)
+        .await
+        .map_err(sfe)?;
+
     sqlx::query("DELETE FROM media WHERE id = ?")
         .bind(id)
         .execute(&db.0)
         .await
         .map_err(sfe)?;
+
+    // Best-effort: remove the file on disk so uploads don't accumulate forever.
+    // The url is `/uploads/<id>_<filename>`; map it back to the on-disk path. A
+    // failure here (already gone, permissions) must not fail the request.
+    if let Some(name) = url.as_deref().and_then(|u| u.strip_prefix("/uploads/")) {
+        let _ = std::fs::remove_file(format!("uploads/{name}"));
+    }
     Ok(())
 }

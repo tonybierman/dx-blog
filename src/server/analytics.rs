@@ -7,17 +7,28 @@ use crate::model::{AnalyticsSummary, DailyViews, PostCard, ReferrerStat};
 #[cfg(feature = "server")]
 use crate::auth_tokens::ANALYTICS_READ;
 #[cfg(feature = "server")]
-use crate::server::{require_perm, sfe, DbExtension};
+use crate::server::{require_perm, sfe, DbExtension, POST_CARD_COLUMNS, POST_CARD_JOINS};
 
 /// Record a page view for a post. Called from the post detail page.
+///
+/// Public and unauthenticated, so it validates server-side that `post_id` refers
+/// to a real *published* post — the conditional INSERT records nothing otherwise.
+/// This stops anyone from POSTing arbitrary ids in a loop to inflate the
+/// view-ranked "Featured"/"Top posts" lists and the analytics dashboard with rows
+/// that don't correspond to any visible post.
 #[post("/api/view", db: DbExtension)]
 pub async fn record_view(post_id: i64, referrer: Option<String>) -> Result<()> {
-    sqlx::query("INSERT INTO post_views (post_id, referrer) VALUES (?, ?)")
-        .bind(post_id)
-        .bind(&referrer)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
+    sqlx::query(
+        "INSERT INTO post_views (post_id, referrer)
+         SELECT ?, ?
+         WHERE EXISTS (SELECT 1 FROM posts WHERE id = ? AND status = 'published')",
+    )
+    .bind(post_id)
+    .bind(&referrer)
+    .bind(post_id)
+    .execute(&db.0)
+    .await
+    .map_err(sfe)?;
     Ok(())
 }
 
@@ -47,22 +58,13 @@ pub async fn analytics_summary() -> Result<AnalyticsSummary> {
 #[get("/api/analytics/top-posts", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn top_posts() -> Result<Vec<PostCard>> {
     require_perm(&auth, ANALYTICS_READ)?;
-    let rows = sqlx::query_as::<_, PostCard>(
-        r#"
-        SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
-               p.author_id,
-               COALESCE(u.display_name, u.username) AS author_name,
-               c.name AS category_name,
-               p.status, p.published_at
-        FROM posts p
-        JOIN users u ON u.id = p.author_id
-        LEFT JOIN categories c ON c.id = p.category_id
-        JOIN (SELECT post_id, COUNT(*) AS views FROM post_views GROUP BY post_id) v
-          ON v.post_id = p.id
-        ORDER BY v.views DESC
-        LIMIT 10
-        "#,
-    )
+    let rows = sqlx::query_as::<_, PostCard>(&format!(
+        "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} \
+         JOIN (SELECT post_id, COUNT(*) AS views FROM post_views GROUP BY post_id) v \
+           ON v.post_id = p.id \
+         ORDER BY v.views DESC \
+         LIMIT 10"
+    ))
     .fetch_all(&db.0)
     .await
     .map_err(sfe)?;

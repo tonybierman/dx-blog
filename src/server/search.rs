@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 use crate::model::{PostFeed, PER_PAGE};
 
 #[cfg(feature = "server")]
-use crate::server::{sfe, DbExtension};
+use crate::server::{sfe, DbExtension, POST_CARD_COLUMNS, POST_CARD_JOINS};
 
 #[post("/api/search", db: DbExtension)]
 pub async fn search_posts(
@@ -64,20 +64,11 @@ pub async fn search_posts(
     }
 
     let items_sql = format!(
-        r#"
-        SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
-               p.author_id,
-               COALESCE(u.display_name, u.username) AS author_name,
-               c.name AS category_name,
-               p.status, p.published_at
-        FROM posts_fts f
-        JOIN posts p ON p.id = f.rowid
-        JOIN users u ON u.id = p.author_id
-        LEFT JOIN categories c ON c.id = p.category_id
-        WHERE posts_fts MATCH ? AND p.status = 'published'{facets}
-        ORDER BY rank
-        LIMIT ? OFFSET ?
-        "#
+        "SELECT {POST_CARD_COLUMNS} \
+         FROM posts_fts f JOIN posts p ON p.id = f.rowid {POST_CARD_JOINS} \
+         WHERE posts_fts MATCH ? AND p.status = 'published'{facets} \
+         ORDER BY rank \
+         LIMIT ? OFFSET ?"
     );
     let mut items_q = sqlx::query_as::<_, PostCard>(&items_sql).bind(&fts_query);
     if let Some(c) = &category_slug {

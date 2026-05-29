@@ -78,7 +78,7 @@ fn render_markdown_drops_onclick_attributes() {
 #[tokio::test]
 async fn unique_slug_is_stable_when_free() {
     let pool = test_pool().await;
-    let slug = unique_slug(&pool, "Hello World").await.unwrap();
+    let slug = unique_slug(&pool, "posts", "Hello World").await.unwrap();
     assert_eq!(slug, "hello-world");
 }
 
@@ -86,20 +86,20 @@ async fn unique_slug_is_stable_when_free() {
 async fn unique_slug_appends_suffix_on_collision() {
     let pool = test_pool().await;
     insert_post(&pool, "Hello World", "hello-world").await;
-    let slug = unique_slug(&pool, "Hello World").await.unwrap();
+    let slug = unique_slug(&pool, "posts", "Hello World").await.unwrap();
     assert_eq!(slug, "hello-world-2");
 
     // A second collision bumps to -3.
     insert_post(&pool, "Hello World 2", "hello-world-2").await;
-    let slug = unique_slug(&pool, "Hello World").await.unwrap();
+    let slug = unique_slug(&pool, "posts", "Hello World").await.unwrap();
     assert_eq!(slug, "hello-world-3");
 }
 
 #[tokio::test]
 async fn unique_slug_falls_back_for_empty_title() {
     let pool = test_pool().await;
-    let slug = unique_slug(&pool, "!!!").await.unwrap();
-    assert_eq!(slug, "post");
+    let slug = unique_slug(&pool, "posts", "!!!").await.unwrap();
+    assert_eq!(slug, "item");
 }
 
 // ---------------------------------------------------------------- comment auto-approve

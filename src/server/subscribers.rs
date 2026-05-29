@@ -7,10 +7,25 @@ use dioxus::prelude::*;
 #[cfg(feature = "server")]
 use crate::server::{sfe, DbExtension, MailExtension};
 
+/// A pragmatic email sanity check: a single `@` with a non-empty local part and a
+/// dotted domain (non-empty labels on both sides of the last dot). Rejects the
+/// likes of `"a@b"` and `"@x.com"` that the old `contains('@') && len >= 3` let
+/// through. Not a full RFC validator — the confirmation email is the real proof.
+#[cfg(feature = "server")]
+fn looks_like_email(email: &str) -> bool {
+    let Some((local, domain)) = email.split_once('@') else {
+        return false;
+    };
+    if local.is_empty() || domain.contains('@') {
+        return false;
+    }
+    matches!(domain.rsplit_once('.'), Some((host, tld)) if !host.is_empty() && !tld.is_empty())
+}
+
 #[post("/api/subscribe", db: DbExtension, mail: MailExtension)]
 pub async fn subscribe(email: String) -> Result<()> {
     let email = email.trim().to_lowercase();
-    if !email.contains('@') || email.len() < 3 {
+    if !looks_like_email(&email) {
         return Err(ServerFnError::new("Please enter a valid email address.").into());
     }
 

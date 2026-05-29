@@ -71,24 +71,43 @@ pub fn render_markdown(md: &str) -> String {
     ammonia::clean(&unsafe_html)
 }
 
-/// Generate a unique slug from a title, appending `-2`, `-3`, … on collision.
+/// The `PostCard` 10-column projection, shared across every feed/search/analytics
+/// read path so a column change is made in one place. Compose with `format!`;
+/// the `FROM` clause and bind order live in each caller.
+#[cfg(feature = "server")]
+pub const POST_CARD_COLUMNS: &str = "p.id, p.title, p.slug, p.excerpt, p.featured_image_url, \
+     p.author_id, COALESCE(u.display_name, u.username) AS author_name, \
+     c.name AS category_name, p.status, p.published_at";
+
+/// The joins those columns depend on (author for `author_name`, category for
+/// `category_name`). Placed right after a `FROM` that aliases the posts row as
+/// `p` (the plain `FROM posts p`, or the FTS join in search).
+#[cfg(feature = "server")]
+pub const POST_CARD_JOINS: &str =
+    "JOIN users u ON u.id = p.author_id LEFT JOIN categories c ON c.id = p.category_id";
+
+/// Generate a unique slug for `name` within `table`, appending `-2`, `-3`, … on
+/// collision. `table` is always an internal constant (`"posts"`, `"categories"`,
+/// `"tags"`), never user input, so interpolating it into the query is safe.
 #[cfg(feature = "server")]
 pub async fn unique_slug(
     pool: &arium_dioxus::pool::Pool,
-    title: &str,
+    table: &str,
+    name: &str,
 ) -> Result<String, sqlx::Error> {
     let base = {
-        let s = slug::slugify(title);
+        let s = slug::slugify(name);
         if s.is_empty() {
-            "post".to_string()
+            "item".to_string()
         } else {
             s
         }
     };
     let mut candidate = base.clone();
     let mut n = 2;
+    let sql = format!("SELECT id FROM {table} WHERE slug = ?");
     loop {
-        let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM posts WHERE slug = ?")
+        let exists: Option<i64> = sqlx::query_scalar(&sql)
             .bind(&candidate)
             .fetch_optional(pool)
             .await?;

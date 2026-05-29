@@ -59,8 +59,11 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
         }
         authors.push(uid);
     }
-    // Author pool includes the admin so admin-authored posts exist too.
-    let author_ids = [authors[0], authors[1], admin];
+    // Author pool includes the admin so admin-authored posts exist too. Push
+    // rather than hard-index `authors[0]/[1]` — the email list above drives the
+    // length, so indexing would panic if it were ever trimmed to one entry.
+    authors.push(admin);
+    let author_ids = authors;
 
     // --- Categories --------------------------------------------------------
     let categories = [

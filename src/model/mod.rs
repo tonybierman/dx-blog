@@ -83,6 +83,18 @@ wire_struct! {
 }
 
 wire_struct! {
+    /// A recent approved comment with its post's title/slug, for the home sidebar.
+    pub struct RecentComment {
+        pub id: i64,
+        pub post_title: String,
+        pub post_slug: String,
+        pub display_name: String,
+        pub body: String,
+        pub created_at: String,
+    }
+}
+
+wire_struct! {
     pub struct AuthorProfile {
         pub user_id: i64,
         pub username: String,
@@ -113,6 +125,22 @@ wire_struct! {
         pub pending_comment_count: i64,
         pub subscriber_count: i64,
         pub view_count: i64,
+    }
+}
+
+wire_struct! {
+    /// One referrer source with its visit count, for the analytics page.
+    pub struct ReferrerStat {
+        pub referrer: String,
+        pub views: i64,
+    }
+}
+
+wire_struct! {
+    /// Views recorded on a single day (`YYYY-MM-DD`), for the time-series chart.
+    pub struct DailyViews {
+        pub day: String,
+        pub views: i64,
     }
 }
 

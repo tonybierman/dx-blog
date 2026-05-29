@@ -24,7 +24,9 @@ mod pages;
 mod seed;
 mod server;
 
-use pages::auth::{ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage};
+use pages::auth::{
+    AccountPage, ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage,
+};
 use pages::errors::{NotFound, ServerError};
 use pages::home::HomePage;
 use pages::admin::{
@@ -32,7 +34,8 @@ use pages::admin::{
     AdminPostNew, AdminSettings, AdminUsers,
 };
 use pages::reader::{
-    Archive, AuthorProfile, CategoryFeed, PostDetail, SearchResults, Subscribe, TagFeed,
+    Archive, AuthorProfile, CategoryFeed, ConfirmSubscription, PostDetail, SearchResults,
+    Subscribe, TagFeed,
 };
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
@@ -55,6 +58,8 @@ pub enum Route {
     ResetPasswordPage { token: String },
     #[route("/auth/verify?:token")]
     VerifyEmailPage { token: String },
+    #[route("/account")]
+    AccountPage,
 
     // --- Public / Reader ---
     #[route("/")]
@@ -73,6 +78,8 @@ pub enum Route {
     SearchResults { q: String },
     #[route("/subscribe")]
     Subscribe,
+    #[route("/subscribe/confirm?:token")]
+    ConfirmSubscription { token: String },
 
     // --- Admin (gated by RequirePermission in each page) ---
     #[route("/admin")]
@@ -192,7 +199,16 @@ fn App() -> Element {
 
         PermissionsProvider {
             OAuthProvidersProvider {
-                Router::<Route> {}
+                // Catch any error thrown while rendering a route (e.g. a server
+                // fn `?` that bubbled out of a component) and render the /500
+                // page UI in place instead of leaving a blank screen.
+                ErrorBoundary {
+                    handle_error: |error: ErrorContext| {
+                        let detail = error.error().map(|e| e.to_string()).unwrap_or_default();
+                        rsx! { ServerError { detail } }
+                    },
+                    Router::<Route> {}
+                }
             }
         }
     }

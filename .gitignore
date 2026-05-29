@@ -12,3 +12,7 @@
 
 # Local env
 .env
+
+# Local planning notes
+TODO.md
+TODO*.md

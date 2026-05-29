@@ -49,7 +49,7 @@ pub fn SiteHeader() -> Element {
                         if can_admin {
                             Link { to: Route::AdminDashboard, class: "hover:underline", "Admin" }
                         }
-                        span { class: "text-white/50", "{name}" }
+                        Link { to: Route::AccountPage, class: "hover:underline", "{name}" }
                         button {
                             class: "rounded border border-white/15 px-2 py-1 hover:bg-white/5",
                             onclick: move |_| {

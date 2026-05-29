@@ -8,7 +8,13 @@ use crate::model::{PostFeed, PER_PAGE};
 use crate::server::{sfe, DbExtension};
 
 #[post("/api/search", db: DbExtension)]
-pub async fn search_posts(q: String, page: i64) -> Result<PostFeed> {
+pub async fn search_posts(
+    q: String,
+    page: i64,
+    category_slug: Option<String>,
+    tag_slug: Option<String>,
+    date_range: Option<String>,
+) -> Result<PostFeed> {
     use crate::model::PostCard;
 
     let q = q.trim().to_string();
@@ -29,7 +35,35 @@ pub async fn search_posts(q: String, page: i64) -> Result<PostFeed> {
         .collect::<Vec<_>>()
         .join(" ");
 
-    let items = sqlx::query_as::<_, PostCard>(
+    // Normalise optional facets. Empty strings (from cleared <select>s) count as absent.
+    let category_slug = category_slug.filter(|s| !s.is_empty());
+    let tag_slug = tag_slug.filter(|s| !s.is_empty());
+    // Map the date bucket to a SQLite datetime modifier (chosen from constants,
+    // never interpolated from user input). Unknown / "any" → no date filter.
+    let date_offset: Option<&'static str> = match date_range.as_deref() {
+        Some("week") => Some("-7 days"),
+        Some("month") => Some("-30 days"),
+        Some("year") => Some("-365 days"),
+        _ => None,
+    };
+
+    // Build the shared facet WHERE fragment. Placeholders bind in this order:
+    // [category_slug?] [tag_slug?] [date_offset?].
+    let mut facets = String::new();
+    if category_slug.is_some() {
+        facets.push_str(" AND p.category_id = (SELECT id FROM categories WHERE slug = ?)");
+    }
+    if tag_slug.is_some() {
+        facets.push_str(
+            " AND EXISTS (SELECT 1 FROM post_tags pt JOIN tags t ON t.id = pt.tag_id \
+             WHERE pt.post_id = p.id AND t.slug = ?)",
+        );
+    }
+    if date_offset.is_some() {
+        facets.push_str(" AND p.published_at >= datetime('now', ?)");
+    }
+
+    let items_sql = format!(
         r#"
         SELECT p.id, p.title, p.slug, p.excerpt, p.featured_image_url,
                p.author_id,
@@ -40,30 +74,47 @@ pub async fn search_posts(q: String, page: i64) -> Result<PostFeed> {
         JOIN posts p ON p.id = f.rowid
         JOIN users u ON u.id = p.author_id
         LEFT JOIN categories c ON c.id = p.category_id
-        WHERE posts_fts MATCH ? AND p.status = 'published'
+        WHERE posts_fts MATCH ? AND p.status = 'published'{facets}
         ORDER BY rank
         LIMIT ? OFFSET ?
-        "#,
-    )
-    .bind(&fts_query)
-    .bind(PER_PAGE)
-    .bind(offset)
-    .fetch_all(&db.0)
-    .await
-    .map_err(sfe)?;
+        "#
+    );
+    let mut items_q = sqlx::query_as::<_, PostCard>(&items_sql).bind(&fts_query);
+    if let Some(c) = &category_slug {
+        items_q = items_q.bind(c);
+    }
+    if let Some(t) = &tag_slug {
+        items_q = items_q.bind(t);
+    }
+    if let Some(off) = date_offset {
+        items_q = items_q.bind(off);
+    }
+    let items = items_q
+        .bind(PER_PAGE)
+        .bind(offset)
+        .fetch_all(&db.0)
+        .await
+        .map_err(sfe)?;
 
-    let total: i64 = sqlx::query_scalar(
+    let count_sql = format!(
         r#"
         SELECT COUNT(*)
         FROM posts_fts f
         JOIN posts p ON p.id = f.rowid
-        WHERE posts_fts MATCH ? AND p.status = 'published'
-        "#,
-    )
-    .bind(&fts_query)
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
+        WHERE posts_fts MATCH ? AND p.status = 'published'{facets}
+        "#
+    );
+    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql).bind(&fts_query);
+    if let Some(c) = &category_slug {
+        count_q = count_q.bind(c);
+    }
+    if let Some(t) = &tag_slug {
+        count_q = count_q.bind(t);
+    }
+    if let Some(off) = date_offset {
+        count_q = count_q.bind(off);
+    }
+    let total = count_q.fetch_one(&db.0).await.map_err(sfe)?;
 
     Ok(PostFeed {
         items,

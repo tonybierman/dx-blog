@@ -2,7 +2,7 @@
 
 use dioxus::prelude::*;
 
-use crate::model::{AnalyticsSummary, PostCard};
+use crate::model::{AnalyticsSummary, DailyViews, PostCard, ReferrerStat};
 
 #[cfg(feature = "server")]
 use crate::auth_tokens::ANALYTICS_READ;
@@ -61,6 +61,48 @@ pub async fn top_posts() -> Result<Vec<PostCard>> {
           ON v.post_id = p.id
         ORDER BY v.views DESC
         LIMIT 10
+        "#,
+    )
+    .fetch_all(&db.0)
+    .await
+    .map_err(sfe)?;
+    Ok(rows)
+}
+
+/// Top external referrers by view count (admin only). Empty/NULL referrers are
+/// bucketed as "(direct)" so direct traffic still shows up.
+#[get("/api/analytics/referrers", auth: arium_dioxus::auth::Session, db: DbExtension)]
+pub async fn top_referrers() -> Result<Vec<ReferrerStat>> {
+    require_perm(&auth, ANALYTICS_READ)?;
+    let rows = sqlx::query_as::<_, ReferrerStat>(
+        r#"
+        SELECT
+          CASE WHEN referrer IS NULL OR referrer = '' THEN '(direct)' ELSE referrer END AS referrer,
+          COUNT(*) AS views
+        FROM post_views
+        GROUP BY referrer
+        ORDER BY views DESC
+        LIMIT 10
+        "#,
+    )
+    .fetch_all(&db.0)
+    .await
+    .map_err(sfe)?;
+    Ok(rows)
+}
+
+/// Daily view counts over the last 30 days (admin only). Only days that
+/// actually recorded views are returned; the chart renders one bar per row.
+#[get("/api/analytics/views-over-time", auth: arium_dioxus::auth::Session, db: DbExtension)]
+pub async fn views_over_time() -> Result<Vec<DailyViews>> {
+    require_perm(&auth, ANALYTICS_READ)?;
+    let rows = sqlx::query_as::<_, DailyViews>(
+        r#"
+        SELECT date(viewed_at) AS day, COUNT(*) AS views
+        FROM post_views
+        WHERE viewed_at >= date('now', '-29 days')
+        GROUP BY day
+        ORDER BY day
         "#,
     )
     .fetch_all(&db.0)

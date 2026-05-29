@@ -15,8 +15,16 @@ pub mod search;
 pub mod subscribers;
 pub mod taxonomy;
 
+#[cfg(all(test, feature = "server"))]
+mod tests;
+
 #[cfg(feature = "server")]
 pub type DbExtension = axum::Extension<arium_dioxus::pool::Pool>;
+
+/// Shared mailer installed by `arium_dioxus::install()` (the `mail` feature is
+/// on). Server fns reach it via this extractor and `&mail.0`.
+#[cfg(feature = "server")]
+pub type MailExtension = axum::Extension<arium_dioxus::Mailer>;
 
 /// Map any server-side error to a `ServerFnError` for return from server fns.
 pub fn sfe<E: std::fmt::Display>(e: E) -> ServerFnError {

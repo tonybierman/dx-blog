@@ -2,7 +2,11 @@
 
 use dioxus::prelude::*;
 
+use arium_dioxus::ui::components::skeleton::Skeleton;
+
 use crate::model::PostCard;
+use crate::server::comments::recent_comments;
+use crate::server::posts::featured_posts;
 use crate::server::taxonomy::{list_categories, list_tags};
 use crate::Route;
 
@@ -55,6 +59,68 @@ pub fn TagList() -> Element {
                     }
                 },
                 Some(Ok(_)) => rsx! { p { class: "text-white/40", "None yet" } },
+                Some(Err(_)) => rsx! { p { class: "text-white/40", "—" } },
+                None => rsx! { p { class: "text-white/40", "…" } },
+            }
+        }
+    }
+}
+
+/// Sidebar list of the most-viewed published posts.
+#[component]
+pub fn FeaturedPosts() -> Element {
+    let featured = use_resource(|| async move { featured_posts(5).await });
+    rsx! {
+        div { class: "text-sm",
+            h3 { class: "mb-2 font-semibold text-white/80", "Featured" }
+            match &*featured.read() {
+                Some(Ok(list)) if !list.is_empty() => rsx! {
+                    ul { class: "space-y-2",
+                        for p in list.clone() {
+                            li { key: "{p.id}",
+                                Link {
+                                    to: Route::PostDetail { slug: p.slug.clone() },
+                                    class: "text-white/60 hover:text-white hover:underline",
+                                    "{p.title}"
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Ok(_)) => rsx! { p { class: "text-white/40", "No posts yet" } },
+                Some(Err(_)) => rsx! { p { class: "text-white/40", "—" } },
+                None => rsx! { p { class: "text-white/40", "…" } },
+            }
+        }
+    }
+}
+
+/// Sidebar list of the most recent approved comments across the blog.
+#[component]
+pub fn RecentComments() -> Element {
+    let recent = use_resource(|| async move { recent_comments(5).await });
+    rsx! {
+        div { class: "mt-6 text-sm",
+            h3 { class: "mb-2 font-semibold text-white/80", "Recent comments" }
+            match &*recent.read() {
+                Some(Ok(list)) if !list.is_empty() => rsx! {
+                    ul { class: "space-y-3",
+                        for c in list.clone() {
+                            li { key: "{c.id}",
+                                p { class: "line-clamp-2 text-white/60", "“{c.body}”" }
+                                div { class: "mt-0.5 text-xs text-white/40",
+                                    span { "{c.display_name} on " }
+                                    Link {
+                                        to: Route::PostDetail { slug: c.post_slug.clone() },
+                                        class: "hover:underline",
+                                        "{c.post_title}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Ok(_)) => rsx! { p { class: "text-white/40", "No comments yet" } },
                 Some(Err(_)) => rsx! { p { class: "text-white/40", "—" } },
                 None => rsx! { p { class: "text-white/40", "…" } },
             }
@@ -121,6 +187,34 @@ pub fn PaginationBar(page: i64, total_pages: i64, on_change: EventHandler<i64>) 
                 disabled: page >= total_pages,
                 onclick: move |_| on_change.call(page + 1),
                 "Next →"
+            }
+        }
+    }
+}
+
+/// Pulsing placeholder shaped like a `PostCardView`, shown while a feed loads.
+#[component]
+pub fn PostCardSkeleton() -> Element {
+    rsx! {
+        article { class: "overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]",
+            Skeleton { style: "height: 10rem; width: 100%; border-radius: 0;" }
+            div { class: "space-y-3 p-4",
+                Skeleton { style: "height: 0.75rem; width: 4rem;" }
+                Skeleton { style: "height: 1.25rem; width: 80%;" }
+                Skeleton { style: "height: 0.75rem; width: 100%;" }
+                Skeleton { style: "height: 0.75rem; width: 90%;" }
+            }
+        }
+    }
+}
+
+/// A grid of `count` card skeletons matching `FeedGrid`'s layout.
+#[component]
+pub fn FeedSkeleton(#[props(default = 4)] count: usize) -> Element {
+    rsx! {
+        div { class: "grid gap-6 sm:grid-cols-2",
+            for i in 0..count {
+                PostCardSkeleton { key: "{i}" }
             }
         }
     }

@@ -3,6 +3,8 @@
 //! UI and redirects them to sign in.
 
 use dioxus::prelude::*;
+use dioxus_sdk_time::use_debounce;
+use std::time::Duration;
 
 use arium_dioxus::ui::{Policy, RequirePermission};
 
@@ -11,7 +13,7 @@ use crate::auth_tokens::{
 };
 use crate::model::{AnalyticsSummary, PostEditData};
 use crate::server::admin::*;
-use crate::server::analytics::{analytics_summary, top_posts};
+use crate::server::analytics::{analytics_summary, top_posts, top_referrers, views_over_time};
 use crate::server::taxonomy::{list_categories, list_tags};
 use crate::Route;
 
@@ -107,6 +109,8 @@ pub fn AdminDashboard() -> Element {
 pub fn AdminAnalytics() -> Element {
     let summary = use_resource(analytics_summary);
     let top = use_resource(top_posts);
+    let referrers = use_resource(top_referrers);
+    let series = use_resource(views_over_time);
     rsx! {
         AdminShell { active: "analytics".to_string(),
             h1 { class: "mb-6 text-2xl font-bold", "Analytics" }
@@ -115,18 +119,66 @@ pub fn AdminAnalytics() -> Element {
                 Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
                 None => rsx! { p { class: "text-white/50", "Loading…" } },
             }
-            h2 { class: "mb-3 mt-8 text-lg font-semibold", "Top posts" }
-            match &*top.read() {
-                Some(Ok(list)) if !list.is_empty() => rsx! {
-                    ul { class: "space-y-1 text-sm",
-                        for p in list.clone() {
-                            li { key: "{p.id}", class: "text-white/70", "{p.title}" }
+
+            h2 { class: "mb-3 mt-8 text-lg font-semibold", "Views over time" }
+            div { class: "rounded-xl border border-white/10 bg-white/[0.03] p-4",
+                match &*series.read() {
+                    Some(Ok(days)) if !days.is_empty() => {
+                        let days = days.clone();
+                        let peak = days.iter().map(|d| d.views).max().unwrap_or(1).max(1);
+                        rsx! {
+                            div { class: "flex h-40 items-end gap-1",
+                                for d in days {
+                                    div {
+                                        key: "{d.day}",
+                                        class: "group relative flex-1 rounded-t bg-sky-500/70 hover:bg-sky-400",
+                                        style: "height: {(d.views * 100) / peak}%",
+                                        title: "{d.day}: {d.views} views",
+                                    }
+                                }
+                            }
                         }
                     }
-                },
-                Some(Ok(_)) => rsx! { p { class: "text-white/40", "No views yet." } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
-                None => rsx! { p { class: "text-white/50", "…" } },
+                    Some(Ok(_)) => rsx! { p { class: "text-white/40", "No views in the last 30 days." } },
+                    Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                    None => rsx! { p { class: "text-white/50", "…" } },
+                }
+            }
+
+            div { class: "mt-8 grid gap-8 md:grid-cols-2",
+                section {
+                    h2 { class: "mb-3 text-lg font-semibold", "Top posts" }
+                    match &*top.read() {
+                        Some(Ok(list)) if !list.is_empty() => rsx! {
+                            ul { class: "space-y-1 text-sm",
+                                for p in list.clone() {
+                                    li { key: "{p.id}", class: "text-white/70", "{p.title}" }
+                                }
+                            }
+                        },
+                        Some(Ok(_)) => rsx! { p { class: "text-white/40", "No views yet." } },
+                        Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                        None => rsx! { p { class: "text-white/50", "…" } },
+                    }
+                }
+                section {
+                    h2 { class: "mb-3 text-lg font-semibold", "Top referrers" }
+                    match &*referrers.read() {
+                        Some(Ok(list)) if !list.is_empty() => rsx! {
+                            ul { class: "space-y-1 text-sm",
+                                for (i, r) in list.clone().into_iter().enumerate() {
+                                    li { key: "{i}", class: "flex items-center justify-between gap-3",
+                                        span { class: "truncate text-white/70", title: "{r.referrer}", "{r.referrer}" }
+                                        span { class: "shrink-0 tabular-nums text-white/50", "{r.views}" }
+                                    }
+                                }
+                            }
+                        },
+                        Some(Ok(_)) => rsx! { p { class: "text-white/40", "No referrers yet." } },
+                        Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                        None => rsx! { p { class: "text-white/50", "…" } },
+                    }
+                }
             }
         }
     }
@@ -136,12 +188,51 @@ pub fn AdminAnalytics() -> Element {
 
 #[component]
 pub fn AdminPostList() -> Element {
-    let mut posts = use_resource(admin_list_posts);
+    // Filter (status) + sort state; the resource refetches whenever either changes.
+    let mut status_filter = use_signal(String::new);
+    let mut sort = use_signal(|| "recent".to_string());
+    let mut posts = use_resource(move || {
+        let st = status_filter();
+        let so = sort();
+        async move {
+            let st = if st.is_empty() { None } else { Some(st) };
+            admin_list_posts(st, Some(so)).await
+        }
+    });
+
+    // Clicking a sortable header toggles between its asc/desc variants.
+    let mut toggle_sort = move |asc: &str, desc: &str| {
+        let cur = sort();
+        sort.set(if cur == asc { desc.to_string() } else { asc.to_string() });
+    };
+
     rsx! {
         AdminShell { active: "posts".to_string(),
             div { class: "mb-6 flex items-center justify-between",
                 h1 { class: "text-2xl font-bold", "Posts" }
                 Link { to: Route::AdminPostNew, class: "rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500", "New post" }
+            }
+            div { class: "mb-4 flex items-center gap-3 text-sm",
+                label { class: "text-white/50", "Status" }
+                select {
+                    class: "rounded border border-white/15 bg-transparent px-2 py-1.5",
+                    onchange: move |e| status_filter.set(e.value()),
+                    option { value: "", selected: status_filter().is_empty(), "All" }
+                    for s in ["draft", "published", "archived"] {
+                        option { value: "{s}", selected: status_filter() == s, "{s}" }
+                    }
+                }
+                label { class: "ml-3 text-white/50", "Sort" }
+                select {
+                    class: "rounded border border-white/15 bg-transparent px-2 py-1.5",
+                    onchange: move |e| sort.set(e.value()),
+                    option { value: "recent", selected: sort() == "recent", "Recently updated" }
+                    option { value: "oldest", selected: sort() == "oldest", "Oldest updated" }
+                    option { value: "title", selected: sort() == "title", "Title A–Z" }
+                    option { value: "title_desc", selected: sort() == "title_desc", "Title Z–A" }
+                    option { value: "status", selected: sort() == "status", "Status" }
+                    option { value: "published", selected: sort() == "published", "Published date" }
+                }
             }
             match &*posts.read() {
                 Some(Ok(list)) if !list.is_empty() => {
@@ -149,7 +240,21 @@ pub fn AdminPostList() -> Element {
                     rsx! {
                         table { class: "w-full text-left text-sm",
                             thead { class: "border-b border-white/10 text-white/50",
-                                tr { th { class: "py-2", "Title" } th { "Status" } th { "Published" } th { "" } }
+                                tr {
+                                    th { class: "py-2",
+                                        button { class: "font-medium hover:text-white",
+                                            onclick: move |_| toggle_sort("title", "title_desc"), "Title" }
+                                    }
+                                    th {
+                                        button { class: "font-medium hover:text-white",
+                                            onclick: move |_| toggle_sort("status", "status"), "Status" }
+                                    }
+                                    th {
+                                        button { class: "font-medium hover:text-white",
+                                            onclick: move |_| toggle_sort("published", "published"), "Published" }
+                                    }
+                                    th { "" }
+                                }
                             }
                             tbody {
                                 for p in list {
@@ -231,8 +336,19 @@ fn EditorForm(initial: PostEditData) -> Element {
 
     let cats = use_resource(list_categories);
     let tags = use_resource(list_tags);
+    // Media library for the featured-image picker.
+    let media = use_resource(list_media);
+    let mut show_media_picker = use_signal(|| false);
+
+    // Live preview is debounced: the textarea updates `body` on every keystroke
+    // (instant local echo), but the server round-trip keys off `preview_md`,
+    // which only catches up 400ms after the user stops typing.
+    let mut preview_md = use_signal(|| initial.body_md.clone());
+    let mut debounce_preview = use_debounce(Duration::from_millis(400), move |md: String| {
+        preview_md.set(md);
+    });
     let preview = use_resource(move || {
-        let md = body();
+        let md = preview_md();
         async move { preview_markdown(md).await }
     });
 
@@ -275,11 +391,53 @@ fn EditorForm(initial: PostEditData) -> Element {
                     value: "{excerpt}",
                     oninput: move |e| excerpt.set(e.value()),
                 }
-                input {
-                    class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
-                    placeholder: "Featured image URL",
-                    value: "{featured}",
-                    oninput: move |e| featured.set(e.value()),
+                // Featured image: URL field plus a media-library picker.
+                div { class: "space-y-2",
+                    div { class: "flex gap-2",
+                        input {
+                            class: "flex-1 rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
+                            placeholder: "Featured image URL",
+                            value: "{featured}",
+                            oninput: move |e| featured.set(e.value()),
+                        }
+                        button {
+                            r#type: "button",
+                            class: "shrink-0 rounded border border-white/15 px-3 text-sm hover:bg-white/5",
+                            onclick: move |_| show_media_picker.set(!show_media_picker()),
+                            if show_media_picker() { "Close" } else { "Library" }
+                        }
+                    }
+                    if !featured().trim().is_empty() {
+                        img { class: "h-24 rounded border border-white/10 object-cover", src: "{featured}", alt: "Featured preview" }
+                    }
+                    if show_media_picker() {
+                        div { class: "rounded border border-white/10 bg-white/[0.03] p-2",
+                            match &*media.read() {
+                                Some(Ok(list)) if !list.is_empty() => rsx! {
+                                    div { class: "grid max-h-48 grid-cols-4 gap-2 overflow-y-auto sm:grid-cols-6",
+                                        for m in list.clone() {
+                                            {
+                                                let url = m.url.clone();
+                                                rsx! {
+                                                    button {
+                                                        key: "{m.id}",
+                                                        r#type: "button",
+                                                        class: "overflow-hidden rounded border border-white/10 hover:border-sky-400",
+                                                        title: "{m.filename}",
+                                                        onclick: move |_| { featured.set(url.clone()); show_media_picker.set(false); },
+                                                        img { class: "h-16 w-full object-cover", src: "{m.url}", alt: "{m.filename}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                Some(Ok(_)) => rsx! { p { class: "p-2 text-sm text-white/50", "No media uploaded yet — add some on the Media page." } },
+                                Some(Err(e)) => rsx! { p { class: "p-2 text-sm text-red-400", "Error: {e}" } },
+                                None => rsx! { p { class: "p-2 text-sm text-white/50", "Loading…" } },
+                            }
+                        }
+                    }
                 }
                 div { class: "flex gap-3",
                     select {
@@ -323,7 +481,11 @@ fn EditorForm(initial: PostEditData) -> Element {
                     class: "h-80 w-full rounded border border-white/15 bg-transparent px-3 py-2 font-mono text-sm",
                     placeholder: "Write in Markdown…",
                     value: "{body}",
-                    oninput: move |e| body.set(e.value()),
+                    oninput: move |e| {
+                        let v = e.value();
+                        body.set(v.clone());
+                        debounce_preview.action(v);
+                    },
                 }
                 div { class: "flex items-center gap-3",
                     button {
@@ -534,6 +696,11 @@ pub fn AdminSettings() -> Element {
     let mut tags = use_resource(list_tags);
     let mut new_cat = use_signal(String::new);
     let mut new_tag = use_signal(String::new);
+    // Inline-rename state: which row (by id) is being edited, and its draft name.
+    let mut edit_cat = use_signal::<Option<i64>>(|| None);
+    let mut edit_cat_name = use_signal(String::new);
+    let mut edit_tag = use_signal::<Option<i64>>(|| None);
+    let mut edit_tag_name = use_signal(String::new);
 
     let add_cat = move |_| {
         let name = new_cat();
@@ -563,11 +730,45 @@ pub fn AdminSettings() -> Element {
                     if let Some(Ok(list)) = &*cats.read() {
                         ul { class: "space-y-1 text-sm",
                             for c in list.clone() {
-                                li { key: "{c.id}", class: "flex items-center justify-between",
-                                    span { "{c.name}" }
-                                    button { class: "text-xs text-red-400 hover:underline",
-                                        onclick: move |_| { spawn(async move { if delete_category(c.id).await.is_ok() { cats.restart(); } }); },
-                                        "Delete"
+                                {
+                                    let cid = c.id;
+                                    let cname = c.name.clone();
+                                    let save = move |_| {
+                                        let name = edit_cat_name();
+                                        spawn(async move {
+                                            if rename_category(cid, name).await.is_ok() {
+                                                edit_cat.set(None);
+                                                cats.restart();
+                                            }
+                                        });
+                                    };
+                                    rsx! {
+                                        li { key: "{cid}", class: "flex items-center justify-between gap-2",
+                                            if edit_cat() == Some(cid) {
+                                                input {
+                                                    class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                                                    value: "{edit_cat_name}",
+                                                    oninput: move |e| edit_cat_name.set(e.value()),
+                                                    onkeydown: move |e| if e.key() == Key::Enter { save(()) },
+                                                }
+                                                button { class: "text-xs text-sky-400 hover:underline", onclick: move |_| save(()), "Save" }
+                                                button { class: "text-xs text-white/50 hover:underline",
+                                                    onclick: move |_| edit_cat.set(None), "Cancel"
+                                                }
+                                            } else {
+                                                span { "{cname}" }
+                                                div { class: "flex gap-2",
+                                                    button { class: "text-xs text-white/60 hover:underline",
+                                                        onclick: move |_| { edit_cat_name.set(cname.clone()); edit_cat.set(Some(cid)); },
+                                                        "Edit"
+                                                    }
+                                                    button { class: "text-xs text-red-400 hover:underline",
+                                                        onclick: move |_| { spawn(async move { if delete_category(cid).await.is_ok() { cats.restart(); } }); },
+                                                        "Delete"
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -583,11 +784,40 @@ pub fn AdminSettings() -> Element {
                     if let Some(Ok(list)) = &*tags.read() {
                         div { class: "flex flex-wrap gap-2",
                             for t in list.clone() {
-                                span { key: "{t.id}", class: "flex items-center gap-1 rounded-full border border-white/15 px-2 py-0.5 text-xs",
-                                    "#{t.name}"
-                                    button { class: "text-red-400",
-                                        onclick: move |_| { spawn(async move { if delete_tag(t.id).await.is_ok() { tags.restart(); } }); },
-                                        "✕"
+                                {
+                                    let tid = t.id;
+                                    let tname = t.name.clone();
+                                    let save = move |_| {
+                                        let name = edit_tag_name();
+                                        spawn(async move {
+                                            if rename_tag(tid, name).await.is_ok() {
+                                                edit_tag.set(None);
+                                                tags.restart();
+                                            }
+                                        });
+                                    };
+                                    rsx! {
+                                        span { key: "{tid}", class: "flex items-center gap-1 rounded-full border border-white/15 px-2 py-0.5 text-xs",
+                                            if edit_tag() == Some(tid) {
+                                                input {
+                                                    class: "w-24 bg-transparent text-xs focus:outline-none",
+                                                    value: "{edit_tag_name}",
+                                                    oninput: move |e| edit_tag_name.set(e.value()),
+                                                    onkeydown: move |e| if e.key() == Key::Enter { save(()) },
+                                                }
+                                                button { class: "text-sky-400", onclick: move |_| save(()), "✓" }
+                                                button { class: "text-white/50", onclick: move |_| edit_tag.set(None), "✕" }
+                                            } else {
+                                                button { class: "hover:underline",
+                                                    onclick: move |_| { edit_tag_name.set(tname.clone()); edit_tag.set(Some(tid)); },
+                                                    "#{tname}"
+                                                }
+                                                button { class: "text-red-400",
+                                                    onclick: move |_| { spawn(async move { if delete_tag(tid).await.is_ok() { tags.restart(); } }); },
+                                                    "✕"
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }

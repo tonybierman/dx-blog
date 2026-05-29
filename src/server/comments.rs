@@ -2,10 +2,35 @@
 
 use dioxus::prelude::*;
 
-use crate::model::CommentView;
+use crate::model::{CommentView, RecentComment};
 
 #[cfg(feature = "server")]
 use crate::server::{sfe, DbExtension};
+
+/// The most recent approved comments across all published posts — backs the
+/// home "Recent comments" sidebar. Public.
+#[post("/api/comments/recent", db: DbExtension)]
+pub async fn recent_comments(limit: i64) -> Result<Vec<RecentComment>> {
+    let limit = limit.clamp(1, 10);
+    let rows = sqlx::query_as::<_, RecentComment>(
+        r#"
+        SELECT cm.id, p.title AS post_title, p.slug AS post_slug,
+               COALESCE(u.display_name, u.username, cm.guest_name, 'Anonymous') AS display_name,
+               cm.body, cm.created_at
+        FROM comments cm
+        JOIN posts p ON p.id = cm.post_id AND p.status = 'published'
+        LEFT JOIN users u ON u.id = cm.author_id
+        WHERE cm.status = 'approved'
+        ORDER BY cm.created_at DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(&db.0)
+    .await
+    .map_err(sfe)?;
+    Ok(rows)
+}
 
 /// Approved comments for a post, oldest first (public view).
 #[post("/api/comments", db: DbExtension)]

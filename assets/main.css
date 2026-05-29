@@ -6,22 +6,31 @@ body {
     margin: 0;
 }
 
-/* Rendered article body (Markdown -> HTML). Self-contained so it doesn't
-   depend on the Tailwind typography plugin, which isn't enabled. */
+/* Rendered article body (Markdown -> HTML).
+ *
+ * Decision (TODO "typography plugin vs hand-rolled .prose"): keep this
+ * hand-rolled rule, do NOT adopt @tailwindcss/typography. The plugin would
+ * force a package.json + node_modules build (today the stylesheet compiles via
+ * zero-install `npx @tailwindcss/cli`) and defaults to a light theme that would
+ * need prose-invert + a stack of overrides just to match what these ~30 lines
+ * already do for one element. The accent now flows through the brand-* token
+ * (tailwind.css `--brand-hue`), so the article body re-themes with the rest of
+ * the UI from the single hue knob. main.css is a static asset, not processed by
+ * Tailwind, but the brand-* custom props it references are global on :root. */
 .prose { line-height: 1.7; }
 .prose h1, .prose h2, .prose h3 { font-weight: 700; line-height: 1.25; margin: 1.4em 0 0.5em; }
 .prose h1 { font-size: 1.8rem; }
 .prose h2 { font-size: 1.4rem; }
 .prose h3 { font-size: 1.2rem; }
 .prose p { margin: 0.9em 0; }
-.prose a { color: #6ea8fe; text-decoration: underline; }
+.prose a { color: var(--color-brand-400, #6ea8fe); text-decoration: underline; }
 .prose ul, .prose ol { margin: 0.9em 0; padding-left: 1.5em; }
 .prose ul { list-style: disc; }
 .prose ol { list-style: decimal; }
 .prose li { margin: 0.3em 0; }
 .prose blockquote {
     margin: 1em 0; padding: 0.2em 1em;
-    border-left: 3px solid #6ea8fe; color: rgba(255, 255, 255, 0.7); font-style: italic;
+    border-left: 3px solid var(--color-brand-400, #6ea8fe); color: rgba(255, 255, 255, 0.7); font-style: italic;
 }
 .prose pre {
     background: #11151c; border: 1px solid rgba(255, 255, 255, 0.1);

@@ -502,7 +502,7 @@ fn EditorForm(initial: PostEditData) -> Element {
             // Right: live preview
             div {
                 h3 { class: "mb-2 text-sm uppercase tracking-wide text-white/40", "Preview" }
-                div { class: "prose prose-invert max-w-none rounded border border-white/10 p-4",
+                div { class: "prose max-w-none rounded border border-white/10 p-4",
                     match &*preview.read() {
                         Some(Ok(html)) => rsx! { div { dangerous_inner_html: "{html}" } },
                         _ => rsx! { p { class: "text-white/40", "…" } },

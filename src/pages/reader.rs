@@ -1,0 +1,399 @@
+//! Public reader pages: post detail, category/tag/author feeds, archive,
+//! search, and subscribe.
+
+use dioxus::prelude::*;
+
+use arium_dioxus::ui::use_permissions;
+
+use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
+use crate::pages::widgets::{CategoryList, FeedGrid, PaginationBar, PostCardView, TagList};
+use crate::server::authors::get_author_profile;
+use crate::server::comments::{create_comment, list_comments};
+use crate::server::posts::{get_post, list_archive, list_posts, posts_by_author};
+use crate::server::search::search_posts;
+use crate::server::subscribers::subscribe;
+use crate::server::taxonomy::{get_category, get_tag};
+use crate::Route;
+
+// ---------------------------------------------------------------- Post detail
+
+#[component]
+pub fn PostDetail(slug: String) -> Element {
+    let post = use_resource(use_reactive!(|(slug,)| async move { get_post(slug).await }));
+
+    rsx! {
+        FullBleedLayout {
+            div { class: "mx-auto max-w-3xl px-4 py-10",
+                Link { to: Route::HomePage, class: "text-sm text-white/50 hover:underline", "← Back" }
+                match &*post.read() {
+                    Some(Ok(Some(p))) => {
+                        let p = p.clone();
+                        rsx! { PostBody { key: "{p.id}", post: p } }
+                    }
+                    Some(Ok(None)) => rsx! { p { class: "mt-8 text-white/60", "Post not found." } },
+                    Some(Err(e)) => rsx! { p { class: "mt-8 text-red-400", "Error: {e}" } },
+                    None => rsx! { p { class: "mt-8 text-white/50", "Loading…" } },
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn PostBody(post: crate::model::PostDetail) -> Element {
+    let post_id = post.id;
+    // Record a view once the post is on screen.
+    use_effect(move || {
+        spawn(async move {
+            let _ = crate::server::analytics::record_view(post_id, None).await;
+        });
+    });
+
+    rsx! {
+        article {
+            if let Some(img) = post.featured_image_url.clone() {
+                img { class: "mb-6 max-h-96 w-full rounded-xl object-cover", src: "{img}", alt: "{post.title}" }
+            }
+            h1 { class: "text-3xl font-bold", "{post.title}" }
+            div { class: "mt-2 flex gap-2 text-sm text-white/50",
+                Link {
+                    to: Route::AuthorProfile { slug: post.author_username.clone() },
+                    class: "hover:underline",
+                    "{post.author_name}"
+                }
+                if let Some(when) = post.published_at.clone() {
+                    span { "· {when}" }
+                }
+            }
+            div { class: "prose prose-invert mt-8 max-w-none", dangerous_inner_html: "{post.body_html}" }
+
+            // Author bio
+            if let Some(bio) = post.author_bio.clone() {
+                div { class: "mt-10 rounded-xl border border-white/10 bg-white/[0.03] p-4",
+                    h3 { class: "font-semibold", "About {post.author_name}" }
+                    p { class: "mt-1 text-sm text-white/60", "{bio}" }
+                }
+            }
+        }
+        CommentSection { post_id }
+    }
+}
+
+#[component]
+fn CommentSection(post_id: i64) -> Element {
+    let perms = use_permissions();
+    let logged_in = perms.is_authenticated();
+    let mut comments = use_resource(move || async move { list_comments(post_id).await });
+
+    let mut body = use_signal(String::new);
+    let mut name = use_signal(String::new);
+    let mut email = use_signal(String::new);
+    let mut status = use_signal(String::new);
+
+    let submit = move |_| {
+        let b = body();
+        let (n, e) = (name(), email());
+        spawn(async move {
+            let gname = if n.is_empty() { None } else { Some(n) };
+            let gemail = if e.is_empty() { None } else { Some(e) };
+            match create_comment(post_id, b, gname, gemail).await {
+                Ok(()) => {
+                    body.set(String::new());
+                    status.set("Thanks! Your comment is awaiting approval.".into());
+                    comments.restart();
+                }
+                Err(err) => status.set(arium_dioxus::friendly_server_error(err)),
+            }
+        });
+    };
+
+    rsx! {
+        section { class: "mt-12 border-t border-white/10 pt-8",
+            h2 { class: "text-xl font-semibold", "Comments" }
+            div { class: "mt-4 space-y-4",
+                match &*comments.read() {
+                    Some(Ok(list)) if !list.is_empty() => rsx! {
+                        for c in list.clone() {
+                            div { key: "{c.id}", class: "rounded-lg border border-white/10 p-3",
+                                div { class: "text-sm font-medium", "{c.display_name}" }
+                                div { class: "text-xs text-white/40", "{c.created_at}" }
+                                p { class: "mt-1 text-sm text-white/80", "{c.body}" }
+                            }
+                        }
+                    },
+                    Some(Ok(_)) => rsx! { p { class: "text-sm text-white/50", "No comments yet." } },
+                    Some(Err(e)) => rsx! { p { class: "text-sm text-red-400", "{e}" } },
+                    None => rsx! { p { class: "text-sm text-white/50", "Loading…" } },
+                }
+            }
+
+            div { class: "mt-6 space-y-2",
+                h3 { class: "font-medium", "Leave a comment" }
+                if !logged_in {
+                    div { class: "flex gap-2",
+                        input {
+                            class: "w-1/2 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                            placeholder: "Name",
+                            value: "{name}",
+                            oninput: move |e| name.set(e.value()),
+                        }
+                        input {
+                            class: "w-1/2 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                            placeholder: "Email",
+                            value: "{email}",
+                            oninput: move |e| email.set(e.value()),
+                        }
+                    }
+                }
+                textarea {
+                    class: "h-24 w-full rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                    placeholder: "Your comment…",
+                    value: "{body}",
+                    oninput: move |e| body.set(e.value()),
+                }
+                button {
+                    class: "rounded bg-sky-600 px-4 py-1.5 text-sm font-medium hover:bg-sky-500",
+                    onclick: submit,
+                    "Post comment"
+                }
+                if !status().is_empty() {
+                    p { class: "text-sm text-white/60", "{status}" }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Feeds
+
+/// Shared paginated feed body used by home/category feeds.
+#[component]
+fn PaginatedFeed(category_slug: Option<String>, tag_slug: Option<String>) -> Element {
+    let mut page = use_signal(|| 1i64);
+    let posts = use_resource(use_reactive!(|(category_slug, tag_slug)| async move {
+        list_posts(page(), category_slug, tag_slug).await
+    }));
+
+    rsx! {
+        match &*posts.read() {
+            Some(Ok(feed)) => {
+                let cards = feed.items.clone();
+                let total_pages = feed.total_pages();
+                rsx! {
+                    FeedGrid { cards }
+                    PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
+                }
+            }
+            Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
+            None => rsx! { p { class: "text-white/50", "Loading…" } },
+        }
+    }
+}
+
+#[component]
+pub fn CategoryFeed(slug: String) -> Element {
+    let cat = {
+        let slug = slug.clone();
+        use_resource(use_reactive!(|(slug,)| async move { get_category(slug).await }))
+    };
+    let title = match &*cat.read() {
+        Some(Ok(Some(c))) => c.name.clone(),
+        _ => slug.clone(),
+    };
+
+    rsx! {
+        HolyGrailLayout {
+            left: rsx! { CategoryList {} TagList {} },
+            h1 { class: "mb-6 text-2xl font-bold", "Category: {title}" }
+            PaginatedFeed { category_slug: Some(slug.clone()), tag_slug: None }
+        }
+    }
+}
+
+#[component]
+pub fn TagFeed(slug: String) -> Element {
+    let tag = {
+        let slug = slug.clone();
+        use_resource(use_reactive!(|(slug,)| async move { get_tag(slug).await }))
+    };
+    let title = match &*tag.read() {
+        Some(Ok(Some(t))) => t.name.clone(),
+        _ => slug.clone(),
+    };
+    let posts = {
+        let slug = slug.clone();
+        use_resource(use_reactive!(|(slug,)| async move {
+            list_posts(1, None, Some(slug)).await
+        }))
+    };
+
+    rsx! {
+        BentoGridLayout {
+            left: rsx! { h1 { class: "text-2xl font-bold", "#{title}" } },
+            match &*posts.read() {
+                Some(Ok(feed)) => rsx! {
+                    for (i, card) in feed.items.clone().into_iter().enumerate() {
+                        div {
+                            key: "{card.id}",
+                            class: if i == 0 { "col-span-2 row-span-2" } else { "" },
+                            PostCardView { card }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
+                None => rsx! { p { class: "text-white/50", "Loading…" } },
+            }
+        }
+    }
+}
+
+#[component]
+pub fn AuthorProfile(slug: String) -> Element {
+    let profile = {
+        let slug = slug.clone();
+        use_resource(use_reactive!(|(slug,)| async move { get_author_profile(slug).await }))
+    };
+    let posts = {
+        let slug = slug.clone();
+        use_resource(use_reactive!(|(slug,)| async move { posts_by_author(slug).await }))
+    };
+
+    let sidebar = match &*profile.read() {
+        Some(Ok(Some(p))) => {
+            let p = p.clone();
+            rsx! {
+                div {
+                    if let Some(av) = p.avatar_url.clone() {
+                        img { class: "mb-3 h-20 w-20 rounded-full object-cover", src: "{av}" }
+                    }
+                    h2 { class: "text-lg font-semibold", "{p.display_name}" }
+                    p { class: "text-sm text-white/40", "@{p.username}" }
+                    if let Some(bio) = p.bio.clone() {
+                        p { class: "mt-2 text-sm text-white/60", "{bio}" }
+                    }
+                }
+            }
+        }
+        _ => rsx! { p { class: "text-white/40", "Author" } },
+    };
+
+    rsx! {
+        HolyGrailLayout {
+            left: sidebar,
+            h1 { class: "mb-6 text-2xl font-bold", "Posts" }
+            match &*posts.read() {
+                Some(Ok(cards)) => rsx! { FeedGrid { cards: cards.clone() } },
+                Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
+                None => rsx! { p { class: "text-white/50", "Loading…" } },
+            }
+        }
+    }
+}
+
+#[component]
+pub fn Archive() -> Element {
+    let posts = use_resource(list_archive);
+    rsx! {
+        MasonryLayout {
+            h1 { class: "mb-6 text-2xl font-bold", "Archive" }
+            match &*posts.read() {
+                Some(Ok(cards)) => rsx! {
+                    for card in cards.clone() {
+                        div { key: "{card.id}", class: "mb-4 inline-block w-full break-inside-avoid",
+                            PostCardView { card }
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
+                None => rsx! { p { class: "text-white/50", "Loading…" } },
+            }
+        }
+    }
+}
+
+#[component]
+pub fn SearchResults(q: String) -> Element {
+    let mut query = use_signal(|| q.clone());
+    let mut page = use_signal(|| 1i64);
+    let results = use_resource(move || {
+        let q = query();
+        async move { search_posts(q, page()).await }
+    });
+
+    rsx! {
+        HolyGrailLayout {
+            right: rsx! {
+                div { class: "text-sm",
+                    h3 { class: "mb-2 font-semibold text-white/80", "Refine" }
+                    p { class: "text-white/40", "Search title and body." }
+                }
+            },
+            h1 { class: "mb-4 text-2xl font-bold", "Search" }
+            input {
+                class: "mb-6 w-full rounded border border-white/15 bg-transparent px-3 py-2",
+                placeholder: "Search posts…",
+                value: "{query}",
+                oninput: move |e| { query.set(e.value()); page.set(1); },
+            }
+            match &*results.read() {
+                Some(Ok(feed)) => {
+                    let cards = feed.items.clone();
+                    let total_pages = feed.total_pages();
+                    rsx! {
+                        p { class: "mb-4 text-sm text-white/50", "{feed.total} result(s)" }
+                        FeedGrid { cards }
+                        PaginationBar { page: page(), total_pages, on_change: move |p| page.set(p) }
+                    }
+                }
+                Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
+                None => rsx! { p { class: "text-white/50", "Loading…" } },
+            }
+        }
+    }
+}
+
+#[component]
+pub fn Subscribe() -> Element {
+    let mut email = use_signal(String::new);
+    let mut status = use_signal(String::new);
+
+    let submit = move |_| {
+        let e = email();
+        spawn(async move {
+            match subscribe(e).await {
+                Ok(()) => {
+                    email.set(String::new());
+                    status.set("You're subscribed! 🎉".into());
+                }
+                Err(err) => status.set(arium_dioxus::friendly_server_error(err)),
+            }
+        });
+    };
+
+    rsx! {
+        FullBleedLayout {
+            div { class: "flex min-h-screen flex-col items-center justify-center gap-4 p-4 text-center",
+                h1 { class: "text-3xl font-bold", "Subscribe" }
+                p { class: "max-w-md text-white/60", "Get new posts in your inbox. No spam." }
+                div { class: "flex w-full max-w-md gap-2",
+                    input {
+                        class: "flex-1 rounded border border-white/15 bg-transparent px-3 py-2",
+                        r#type: "email",
+                        placeholder: "you@example.com",
+                        value: "{email}",
+                        oninput: move |e| email.set(e.value()),
+                    }
+                    button {
+                        class: "rounded bg-sky-600 px-4 py-2 font-medium hover:bg-sky-500",
+                        onclick: submit,
+                        "Subscribe"
+                    }
+                }
+                if !status().is_empty() {
+                    p { class: "text-sm text-white/70", "{status}" }
+                }
+                Link { to: Route::HomePage, class: "text-sm text-white/50 hover:underline", "← Home" }
+            }
+        }
+    }
+}

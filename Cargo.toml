@@ -1,0 +1,71 @@
+[package]
+name = "dx-blog"
+version = "0.1.0"
+authors = ["Tony Bierman <tonybierman@gmail.com>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dioxus = { version = "0.7.9", features = ["router", "fullstack"] }
+dioxus-web = { version = "0.7.9", features = ["hydrate"], optional = true }
+
+# Auth/authz engine + Dioxus adapter (path dep on the local arium workspace).
+# `default-features = false` so we pick capabilities explicitly. `sql-membership`
+# brings `SqlMembershipStore` + `membership_migrator` for per-post ownership.
+arium-dioxus = { path = "../arium/crates/arium-dioxus", default-features = false, features = [
+    "ui",
+    "mail",
+    "oauth-github",
+    "ratelimit",
+    "tokens",
+    "sql-membership",
+] }
+
+# Wire types (serde) shared across the client/server boundary — needed on both
+# targets, so not gated behind `server`.
+serde = { version = "1", features = ["derive"] }
+
+# Server-only deps. Enabled by the `server` feature; `dx` does not turn `server`
+# on for the wasm client build, so these never compile for wasm. The sqlx driver
+# is forwarded weakly by the `sqlite`/`postgres` features below.
+axum = { version = "0.8.4", default-features = false, optional = true, features = ["macros"] }
+sqlx = { version = "0.8.6", default-features = false, optional = true, features = [
+    "macros",
+    "migrate",
+    "runtime-tokio",
+] }
+async-trait = { version = "0.1.88", optional = true }
+anyhow = { version = "1.0.98", optional = true }
+tower-http = { version = "0.6", optional = true, features = ["fs"] }        # static /uploads
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"], optional = true }  # markdown render
+ammonia = { version = "4", optional = true }                                # HTML sanitize
+slug = { version = "0.1", optional = true }                                 # slug generation
+base64 = { version = "0.22", optional = true }                             # media upload decode
+
+[features]
+default = ["web", "server", "sqlite"]
+web = ["dioxus/web", "dep:dioxus-web"]
+server = [
+    "dioxus/server",
+    "dep:axum",
+    "dep:sqlx",
+    "dep:async-trait",
+    "dep:anyhow",
+    "dep:tower-http",
+    "dep:pulldown-cmark",
+    "dep:ammonia",
+    "dep:slug",
+    "dep:base64",
+    "arium-dioxus/server",
+]
+
+# Backend selection — enable exactly one, matching arium's compile-time choice.
+# Weak `sqlx?/sqlite` forwards the driver only when `sqlx` is present (server).
+sqlite = ["arium-dioxus/sqlite", "sqlx?/sqlite"]
+postgres = ["arium-dioxus/postgres", "sqlx?/postgres"]
+
+# dioxus-web is dragged in only for its ["hydrate"] feature — no call site for
+# cargo-machete to find, but dropping it silently disables hydration.
+[package.metadata.cargo-machete]
+ignored = ["dioxus-web"]

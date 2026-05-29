@@ -1,0 +1,136 @@
+/* App-wide styling */
+body {
+    background-color: #0f1116;
+    color: #ffffff;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+}
+
+/* Rendered article body (Markdown -> HTML). Self-contained so it doesn't
+   depend on the Tailwind typography plugin, which isn't enabled. */
+.prose { line-height: 1.7; }
+.prose h1, .prose h2, .prose h3 { font-weight: 700; line-height: 1.25; margin: 1.4em 0 0.5em; }
+.prose h1 { font-size: 1.8rem; }
+.prose h2 { font-size: 1.4rem; }
+.prose h3 { font-size: 1.2rem; }
+.prose p { margin: 0.9em 0; }
+.prose a { color: #6ea8fe; text-decoration: underline; }
+.prose ul, .prose ol { margin: 0.9em 0; padding-left: 1.5em; }
+.prose ul { list-style: disc; }
+.prose ol { list-style: decimal; }
+.prose li { margin: 0.3em 0; }
+.prose blockquote {
+    margin: 1em 0; padding: 0.2em 1em;
+    border-left: 3px solid #6ea8fe; color: rgba(255, 255, 255, 0.7); font-style: italic;
+}
+.prose pre {
+    background: #11151c; border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px; padding: 1em; overflow-x: auto; margin: 1em 0;
+}
+.prose code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+.prose :not(pre) > code {
+    background: rgba(255, 255, 255, 0.08); padding: 0.1em 0.35em; border-radius: 4px;
+}
+.prose img { max-width: 100%; border-radius: 8px; }
+.prose table { border-collapse: collapse; margin: 1em 0; }
+.prose th, .prose td { border: 1px solid rgba(255, 255, 255, 0.15); padding: 0.4em 0.7em; }
+
+#hero {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+#links {
+    width: 400px;
+    text-align: left;
+    font-size: x-large;
+    color: white;
+    display: flex;
+    flex-direction: column;
+}
+
+#links a {
+    color: white;
+    text-decoration: none;
+    margin-top: 20px;
+    margin: 10px 0px;
+    border: white 1px solid;
+    border-radius: 5px;
+    padding: 10px;
+}
+
+#links a:hover {
+    background-color: #1f1f1f;
+    cursor: pointer;
+}
+
+#header {
+    max-width: 1200px;
+}
+
+/* Navbar */
+#navbar {
+    display: flex;
+    flex-direction: row;
+  }
+  
+#navbar a {
+    color: #ffffff;
+    margin-right: 20px;
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+#navbar a:hover {
+    cursor: pointer;
+    color: #91a4d2;
+}
+
+/* Blog page */
+#blog {
+    margin-top: 50px;
+  }
+  
+#blog a {
+    color: #ffffff;
+    margin-top: 50px;
+}
+
+/* Echo */
+#echo {
+    width: 360px;
+    margin-left: auto;
+    margin-right: auto;
+    margin-top: 50px;
+    background-color: #1e222d;
+    padding: 20px;
+    border-radius: 10px;
+}
+
+#echo>h4 {
+    margin: 0px 0px 15px 0px;
+}
+
+
+#echo>input {
+    border: none;
+    border-bottom: 1px white solid;
+    background-color: transparent;
+    color: #ffffff;
+    transition: border-bottom-color 0.2s ease;
+    outline: none;
+    display: block;
+    padding: 0px 0px 5px 0px;
+    width: 100%;
+}
+
+#echo>input:focus {
+    border-bottom-color: #6d85c6;
+}
+
+#echo>p {
+    margin: 20px 0px 0px auto;
+}

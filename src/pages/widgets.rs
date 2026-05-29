@@ -149,7 +149,7 @@ pub fn PostCardView(card: PostCard) -> Element {
             }
             div { class: "p-4",
                 if let Some(cat) = category_name {
-                    span { class: "text-xs uppercase tracking-wide text-sky-400", "{cat}" }
+                    span { class: "text-xs uppercase tracking-wide text-brand-400", "{cat}" }
                 }
                 h2 { class: "mt-1 text-lg font-semibold",
                     Link { to: Route::PostDetail { slug: slug.clone() }, class: "hover:underline", "{title}" }

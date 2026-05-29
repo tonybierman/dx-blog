@@ -14,6 +14,7 @@ use crate::auth_tokens::{
 use crate::model::{AnalyticsSummary, PostEditData};
 use crate::server::admin::*;
 use crate::server::analytics::{analytics_summary, top_posts, top_referrers, views_over_time};
+use crate::server::settings::{get_theme_hue, set_theme_hue, DEFAULT_THEME_HUE};
 use crate::server::taxonomy::{list_categories, list_tags};
 use crate::Route;
 
@@ -131,7 +132,7 @@ pub fn AdminAnalytics() -> Element {
                                 for d in days {
                                     div {
                                         key: "{d.day}",
-                                        class: "group relative flex-1 rounded-t bg-sky-500/70 hover:bg-sky-400",
+                                        class: "group relative flex-1 rounded-t bg-brand-500/70 hover:bg-brand-400",
                                         style: "height: {(d.views * 100) / peak}%",
                                         title: "{d.day}: {d.views} views",
                                     }
@@ -210,7 +211,7 @@ pub fn AdminPostList() -> Element {
         AdminShell { active: "posts".to_string(),
             div { class: "mb-6 flex items-center justify-between",
                 h1 { class: "text-2xl font-bold", "Posts" }
-                Link { to: Route::AdminPostNew, class: "rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500", "New post" }
+                Link { to: Route::AdminPostNew, class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", "New post" }
             }
             div { class: "mb-4 flex items-center gap-3 text-sm",
                 label { class: "text-white/50", "Status" }
@@ -263,7 +264,7 @@ pub fn AdminPostList() -> Element {
                                         td { span { class: "rounded-full border border-white/15 px-2 py-0.5 text-xs", "{p.status}" } }
                                         td { class: "text-white/50", {p.published_at.clone().unwrap_or_else(|| "—".into())} }
                                         td { class: "flex gap-3 py-2",
-                                            Link { to: Route::AdminPostEdit { id: p.id }, class: "text-sky-400 hover:underline", "Edit" }
+                                            Link { to: Route::AdminPostEdit { id: p.id }, class: "text-brand-400 hover:underline", "Edit" }
                                             DeletePostButton { id: p.id, on_deleted: move |_| posts.restart() }
                                         }
                                     }
@@ -422,7 +423,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                                                     button {
                                                         key: "{m.id}",
                                                         r#type: "button",
-                                                        class: "overflow-hidden rounded border border-white/10 hover:border-sky-400",
+                                                        class: "overflow-hidden rounded border border-white/10 hover:border-brand-400",
                                                         title: "{m.filename}",
                                                         onclick: move |_| { featured.set(url.clone()); show_media_picker.set(false); },
                                                         img { class: "h-16 w-full object-cover", src: "{m.url}", alt: "{m.filename}" }
@@ -489,7 +490,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                 }
                 div { class: "flex items-center gap-3",
                     button {
-                        class: "rounded bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-500",
+                        class: "rounded bg-brand-600 px-4 py-2 text-sm font-medium hover:bg-brand-500",
                         onclick: submit,
                         if editing { "Save changes" } else { "Create post" }
                     }
@@ -554,7 +555,7 @@ pub fn AdminComments() -> Element {
 fn ModButton(id: i64, action: String, label: String, on_done: EventHandler<()>) -> Element {
     rsx! {
         button {
-            class: "text-sky-400 hover:underline",
+            class: "text-brand-400 hover:underline",
             onclick: move |_| {
                 let action = action.clone();
                 spawn(async move {
@@ -622,7 +623,7 @@ pub fn AdminMedia() -> Element {
             h1 { class: "mb-6 text-2xl font-bold", "Media library" }
             div { class: "mb-6 flex items-center gap-3",
                 input { id: "mediafile", r#type: "file", accept: "image/*", class: "text-sm" }
-                button { class: "rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500", onclick: upload, "Upload" }
+                button { class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", onclick: upload, "Upload" }
                 if !msg().is_empty() { span { class: "text-sm text-white/60", "{msg}" } }
             }
             match &*media.read() {
@@ -688,6 +689,115 @@ pub fn AdminUsers() -> Element {
     }
 }
 
+// ---------------------------------------------------------------- settings (theme)
+
+/// Live preview: set the hue signal and override the CSS var on `<html>` so the
+/// whole page recolors immediately, independent of any save round-trip. A free
+/// fn (not a closure) so it can be reused across several event handlers — the
+/// `Signal` is `Copy`, so passing it by value still writes the shared state.
+fn preview_hue(mut hue: Signal<i64>, h: i64) {
+    hue.set(h);
+    let _ = document::eval(&format!(
+        "document.documentElement.style.setProperty('--brand-hue', '{h}')"
+    ));
+}
+
+/// Accent-hue picker. Drives the Tailwind `--brand-hue` knob: presets + a
+/// 0–360 slider, applied live on the document for instant preview and persisted
+/// site-wide via `set_theme_hue`. Swatches are rendered with raw oklch so the
+/// admin sees the actual accent at each hue.
+#[component]
+fn ThemeSelector() -> Element {
+    let saved = use_resource(get_theme_hue);
+    let mut hue = use_signal(|| DEFAULT_THEME_HUE);
+    let mut msg = use_signal(String::new);
+
+    // Sync the control to the stored hue once it loads.
+    use_effect(move || {
+        if let Some(Ok(h)) = &*saved.read() {
+            hue.set(*h);
+        }
+    });
+
+    let presets = [
+        ("Sky", 235),
+        ("Indigo", 265),
+        ("Violet", 295),
+        ("Pink", 330),
+        ("Crimson", 15),
+        ("Orange", 55),
+        ("Emerald", 155),
+        ("Teal", 195),
+    ];
+
+    rsx! {
+        section { class: "mb-8 max-w-xl",
+            h2 { class: "mb-1 text-lg font-semibold", "Theme" }
+            p { class: "mb-3 text-sm text-white/50",
+                "Pick the site accent. Changes preview instantly and save site-wide."
+            }
+            div { class: "flex flex-wrap gap-2",
+                for (name, h) in presets {
+                    button {
+                        key: "{name}",
+                        r#type: "button",
+                        class: if hue() == h {
+                            "flex items-center gap-1.5 rounded-full border border-white/50 px-3 py-1 text-xs"
+                        } else {
+                            "flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1 text-xs hover:border-white/40"
+                        },
+                        onclick: move |_| {
+                            preview_hue(hue, h);
+                            spawn(async move {
+                                match set_theme_hue(h).await {
+                                    Ok(()) => msg.set("Saved.".into()),
+                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
+                                }
+                            });
+                        },
+                        span {
+                            class: "inline-block h-3 w-3 rounded-full",
+                            style: "background: oklch(68.5% 0.165 {h})",
+                        }
+                        "{name}"
+                    }
+                }
+            }
+            div { class: "mt-4 flex items-center gap-3",
+                input {
+                    r#type: "range",
+                    min: "0",
+                    max: "360",
+                    value: "{hue}",
+                    class: "w-64 accent-brand-500",
+                    // Drag = live preview only (no save spam)…
+                    oninput: move |e| { if let Ok(h) = e.value().parse::<i64>() { preview_hue(hue, h); } },
+                    // …release = persist.
+                    onchange: move |e| {
+                        if let Ok(h) = e.value().parse::<i64>() {
+                            preview_hue(hue, h);
+                            spawn(async move {
+                                match set_theme_hue(h).await {
+                                    Ok(()) => msg.set("Saved.".into()),
+                                    Err(e) => msg.set(arium_dioxus::friendly_server_error(e)),
+                                }
+                            });
+                        }
+                    },
+                }
+                span { class: "w-14 tabular-nums text-sm text-white/60", "{hue()}°" }
+                span {
+                    class: "inline-block h-7 w-7 rounded-full border border-white/20",
+                    style: "background: oklch(58.8% 0.155 {hue})",
+                }
+                if !msg().is_empty() {
+                    span { class: "text-xs text-white/50", "{msg}" }
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------- settings (taxonomy)
 
 #[component]
@@ -720,12 +830,13 @@ pub fn AdminSettings() -> Element {
     rsx! {
         AdminShell { active: "settings".to_string(),
             h1 { class: "mb-6 text-2xl font-bold", "Site settings" }
+            ThemeSelector {}
             div { class: "grid gap-8 md:grid-cols-2",
                 section {
                     h2 { class: "mb-3 text-lg font-semibold", "Categories" }
                     div { class: "mb-3 flex gap-2",
                         input { class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm", placeholder: "New category", value: "{new_cat}", oninput: move |e| new_cat.set(e.value()) }
-                        button { class: "rounded bg-sky-600 px-3 text-sm", onclick: add_cat, "Add" }
+                        button { class: "rounded bg-brand-600 px-3 text-sm", onclick: add_cat, "Add" }
                     }
                     if let Some(Ok(list)) = &*cats.read() {
                         ul { class: "space-y-1 text-sm",
@@ -751,7 +862,7 @@ pub fn AdminSettings() -> Element {
                                                     oninput: move |e| edit_cat_name.set(e.value()),
                                                     onkeydown: move |e| if e.key() == Key::Enter { save(()) },
                                                 }
-                                                button { class: "text-xs text-sky-400 hover:underline", onclick: move |_| save(()), "Save" }
+                                                button { class: "text-xs text-brand-400 hover:underline", onclick: move |_| save(()), "Save" }
                                                 button { class: "text-xs text-white/50 hover:underline",
                                                     onclick: move |_| edit_cat.set(None), "Cancel"
                                                 }
@@ -779,7 +890,7 @@ pub fn AdminSettings() -> Element {
                     h2 { class: "mb-3 text-lg font-semibold", "Tags" }
                     div { class: "mb-3 flex gap-2",
                         input { class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm", placeholder: "New tag", value: "{new_tag}", oninput: move |e| new_tag.set(e.value()) }
-                        button { class: "rounded bg-sky-600 px-3 text-sm", onclick: add_tag, "Add" }
+                        button { class: "rounded bg-brand-600 px-3 text-sm", onclick: add_tag, "Add" }
                     }
                     if let Some(Ok(list)) = &*tags.read() {
                         div { class: "flex flex-wrap gap-2",
@@ -805,7 +916,7 @@ pub fn AdminSettings() -> Element {
                                                     oninput: move |e| edit_tag_name.set(e.value()),
                                                     onkeydown: move |e| if e.key() == Key::Enter { save(()) },
                                                 }
-                                                button { class: "text-sky-400", onclick: move |_| save(()), "✓" }
+                                                button { class: "text-brand-400", onclick: move |_| save(()), "✓" }
                                                 button { class: "text-white/50", onclick: move |_| edit_tag.set(None), "✕" }
                                             } else {
                                                 button { class: "hover:underline",

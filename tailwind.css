@@ -1,1 +1,36 @@
 @import "tailwindcss";
+
+/* ----------------------------------------------------------------------------
+ * Blog theme tokens (Tailwind v4 `@theme`).
+ *
+ * Everything the blog UI treats as "the accent" runs through the `brand-*`
+ * color scale below, so the whole site re-themes from one place. The scale is
+ * built in oklch around a single hue knob — change `--brand-hue` and every
+ * brand-400/500/600 utility (buttons, links, category labels, focus rings)
+ * shifts together. Lightness/chroma per step are tuned to read well on the
+ * dark background; tweak those too for a bolder or softer accent.
+ *
+ * After editing this file, recompile the stylesheet the browser loads:
+ *   npx @tailwindcss/cli -i tailwind.css -o assets/tailwind.css
+ * (`dx serve` / `dx build` also regenerate it.)
+ * ------------------------------------------------------------------------- */
+@theme {
+  /* One knob: the oklch hue angle of the accent. 235 ≈ the original sky blue.
+     Try ~265 for indigo, ~330 for pink, ~150 for emerald, ~25 for orange. */
+  --brand-hue: 235;
+
+  --color-brand-50:  oklch(97.0% 0.013 var(--brand-hue));
+  --color-brand-100: oklch(93.2% 0.032 var(--brand-hue));
+  --color-brand-200: oklch(88.5% 0.060 var(--brand-hue));
+  --color-brand-300: oklch(82.8% 0.095 var(--brand-hue));
+  --color-brand-400: oklch(74.6% 0.140 var(--brand-hue));
+  --color-brand-500: oklch(68.5% 0.165 var(--brand-hue));
+  --color-brand-600: oklch(58.8% 0.155 var(--brand-hue));
+  --color-brand-700: oklch(50.0% 0.130 var(--brand-hue));
+  --color-brand-800: oklch(42.4% 0.105 var(--brand-hue));
+  --color-brand-900: oklch(37.9% 0.085 var(--brand-hue));
+  --color-brand-950: oklch(28.2% 0.060 var(--brand-hue));
+
+  /* Typeface knob — swap the stack to re-font the whole blog. */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}

@@ -183,12 +183,23 @@ fn main() {
 
 #[component]
 fn App() -> Element {
+    // Site accent: fetch the stored hue and override the `--brand-hue` knob
+    // baked into tailwind.css. Until it resolves, the compiled-in default
+    // applies, so a default-themed site shows no flash.
+    let theme_hue = use_resource(crate::server::settings::get_theme_hue);
+
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
         // arium's catalog theme tokens (canonical — no vendored copy).
         document::Stylesheet { href: arium_dioxus::DEFAULT_THEME_CSS }
         document::Stylesheet { href: MAIN_CSS }
         document::Stylesheet { href: TAILWIND_CSS }
+
+        // Runtime theme override. Loaded after the stylesheets so it wins the
+        // cascade; recolors every brand-* utility site-wide.
+        if let Some(Ok(hue)) = &*theme_hue.read() {
+            style { {format!(":root {{ --brand-hue: {hue}; }}")} }
+        }
 
         // Pre-mount catalog widgets so their css_module assets register on the
         // first render, avoiding an unstyled flash on the login/logout remount.

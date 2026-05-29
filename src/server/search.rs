@@ -2,7 +2,7 @@
 
 use dioxus::prelude::*;
 
-use crate::model::{PostFeed, PER_PAGE};
+use crate::model::{page_offset, PostFeed, PER_PAGE};
 
 #[cfg(feature = "server")]
 use crate::server::{sfe, DbExtension, POST_CARD_COLUMNS, POST_CARD_JOINS};
@@ -19,15 +19,9 @@ pub async fn search_posts(
 
     let q = q.trim().to_string();
     if q.is_empty() {
-        return Ok(PostFeed {
-            items: vec![],
-            total: 0,
-            page: 1,
-            per_page: PER_PAGE,
-        });
+        return Ok(PostFeed::empty());
     }
-    let page = page.max(1);
-    let offset = (page - 1) * PER_PAGE;
+    let (page, offset) = page_offset(page);
     // Prefix-match each term so partial words hit; quote to neutralise FTS syntax.
     let fts_query = q
         .split_whitespace()
@@ -107,10 +101,5 @@ pub async fn search_posts(
     }
     let total = count_q.fetch_one(&db.0).await.map_err(sfe)?;
 
-    Ok(PostFeed {
-        items,
-        total,
-        page,
-        per_page: PER_PAGE,
-    })
+    Ok(PostFeed::new(items, total, page))
 }

@@ -180,6 +180,23 @@ pub struct PostFeed {
 }
 
 impl PostFeed {
+    /// Build a feed page with the standard [`PER_PAGE`] window, so the four
+    /// paginated read paths (`list_posts` / `list_archive` / `posts_by_author` /
+    /// `search_posts`) don't each repeat the struct literal + `per_page`.
+    pub fn new(items: Vec<PostCard>, total: i64, page: i64) -> Self {
+        PostFeed {
+            items,
+            total,
+            page,
+            per_page: PER_PAGE,
+        }
+    }
+
+    /// An empty page (e.g. a blank search query). Page defaults to 1.
+    pub fn empty() -> Self {
+        PostFeed::new(Vec::new(), 0, 1)
+    }
+
     pub fn total_pages(&self) -> i64 {
         if self.per_page <= 0 {
             return 1;
@@ -190,6 +207,36 @@ impl PostFeed {
 
 /// Default page size for listings.
 pub const PER_PAGE: i64 = 10;
+
+/// Clamp a 1-based page number to ≥ 1 and return `(page, offset)` for a
+/// [`PER_PAGE`]-sized window. Shared by every paginated query.
+pub fn page_offset(page: i64) -> (i64, i64) {
+    let page = page.max(1);
+    (page, (page - 1) * PER_PAGE)
+}
+
+/// Normalize a stored SQLite datetime (`YYYY-MM-DD HH:MM:SS`, UTC) to the ISO
+/// 8601 / RFC 3339 form (`YYYY-MM-DDTHH:MM:SSZ`) that Atom, the sitemap, and Open
+/// Graph all expect: just a separator swap plus a `Z` UTC marker. Empty input and
+/// values already carrying a `T` pass through unchanged. Shared by the feed /
+/// sitemap (server) and the per-post `<head>` tags (client).
+pub fn to_rfc3339(dt: &str) -> String {
+    let t = dt.trim();
+    if t.is_empty() || t.contains('T') {
+        return t.to_string();
+    }
+    format!("{}Z", t.replacen(' ', "T", 1))
+}
+
+/// The post lifecycle statuses. Single source of truth for the server-side
+/// whitelist (mirrors the DB `CHECK`), the admin status `<select>`, and the
+/// status filter — so the set lives in exactly one place.
+pub const POST_STATUSES: [&str; 3] = ["draft", "published", "archived"];
+pub const STATUS_DRAFT: &str = "draft";
+pub const STATUS_PUBLISHED: &str = "published";
+
+/// The comment moderation statuses (mirrors the DB `CHECK`).
+pub const COMMENT_STATUSES: [&str; 3] = ["pending", "approved", "rejected"];
 
 /// Which structural/marketing layout the public home page renders the post feed
 /// in. Chosen by an admin in Settings and persisted in `site_settings`. The 12

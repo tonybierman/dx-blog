@@ -16,28 +16,58 @@
 
 use axum::{http::header, response::IntoResponse};
 
+use crate::model::to_rfc3339;
 use crate::server::DbExtension;
 
 /// Number of most-recent posts included in the Atom feed.
 const FEED_LIMIT: i64 = 20;
 
+/// True if `s` looks like an `http(s)://host[:port]` origin: a known scheme and
+/// a non-empty host with no embedded whitespace or path. Guards against a
+/// misconfigured `SITE_URL` (e.g. `blog.example.com`, or a value with a path)
+/// being concatenated into og:url / feed / emailed-confirm links.
+fn is_valid_origin(s: &str) -> bool {
+    match s
+        .strip_prefix("https://")
+        .or_else(|| s.strip_prefix("http://"))
+    {
+        Some(host) => !host.is_empty() && !host.contains([' ', '\t', '/']),
+        None => false,
+    }
+}
+
 /// Canonical site origin for absolute URLs, e.g. `https://blog.example.com`.
-/// Reads `SITE_URL` (trailing slash trimmed); falls back to localhost in dev.
+/// Reads `SITE_URL` (trailing slash trimmed); falls back to localhost when unset
+/// or when the value isn't a valid `http(s)://` origin.
 pub fn site_base() -> String {
     std::env::var("SITE_URL")
         .ok()
         .map(|s| s.trim().trim_end_matches('/').to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|s| is_valid_origin(s))
         .unwrap_or_else(|| "http://localhost:3000".to_string())
 }
 
-/// Human-facing site name for the feed `<title>`. Reads `SITE_TITLE`.
-fn site_title() -> String {
-    std::env::var("SITE_TITLE")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "dx-blog".to_string())
+/// Human-facing site name for the feed `<title>`. Prefers the admin-configured
+/// site title (the same value the page chrome shows) so the feed stays in sync
+/// with the site; falls back to the `SITE_TITLE` env, then the shared default.
+async fn site_title(pool: &arium_dioxus::pool::Pool) -> String {
+    let from_db: Option<String> =
+        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'site_title'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|s: String| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+    from_db
+        .or_else(|| {
+            std::env::var("SITE_TITLE")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| crate::server::settings::DEFAULT_SITE_TITLE.to_string())
 }
 
 /// XML-escape text for safe inclusion in element content or attributes.
@@ -54,18 +84,6 @@ fn xml_escape(s: &str) -> String {
         }
     }
     out
-}
-
-/// SQLite stores `datetime('now')` as `YYYY-MM-DD HH:MM:SS` in UTC. Both Atom
-/// (RFC 3339) and the sitemap (W3C datetime) accept `YYYY-MM-DDTHH:MM:SSZ`, so
-/// the conversion is just a separator swap plus a UTC marker. Values already
-/// containing a `T` are passed through unchanged.
-fn to_rfc3339(dt: &str) -> String {
-    let t = dt.trim();
-    if t.is_empty() || t.contains('T') {
-        return t.to_string();
-    }
-    format!("{}Z", t.replacen(' ', "T", 1))
 }
 
 /// `GET /sitemap.xml` — the home and archive landing pages, every published
@@ -165,7 +183,7 @@ struct FeedRow {
 pub async fn atom_handler(db: DbExtension) -> impl IntoResponse {
     let pool = &db.0;
     let base = site_base();
-    let title = site_title();
+    let title = site_title(pool).await;
     let feed_url = format!("{base}/feed.xml");
 
     let posts = sqlx::query_as::<_, FeedRow>(

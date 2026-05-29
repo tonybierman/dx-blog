@@ -5,22 +5,7 @@
 use dioxus::prelude::*;
 
 #[cfg(feature = "server")]
-use crate::server::{sfe, DbExtension, MailExtension};
-
-/// A pragmatic email sanity check: a single `@` with a non-empty local part and a
-/// dotted domain (non-empty labels on both sides of the last dot). Rejects the
-/// likes of `"a@b"` and `"@x.com"` that the old `contains('@') && len >= 3` let
-/// through. Not a full RFC validator — the confirmation email is the real proof.
-#[cfg(feature = "server")]
-fn looks_like_email(email: &str) -> bool {
-    let Some((local, domain)) = email.split_once('@') else {
-        return false;
-    };
-    if local.is_empty() || domain.contains('@') {
-        return false;
-    }
-    matches!(domain.rsplit_once('.'), Some((host, tld)) if !host.is_empty() && !tld.is_empty())
-}
+use crate::server::{looks_like_email, sfe, DbExtension, MailExtension};
 
 #[post("/api/subscribe", db: DbExtension, mail: MailExtension)]
 pub async fn subscribe(email: String) -> Result<()> {
@@ -87,8 +72,15 @@ pub async fn subscribe(email: String) -> Result<()> {
     Ok(())
 }
 
+/// How long a subscription-confirmation token stays valid. Past this window a
+/// token is treated as expired (`confirm_subscription` returns `false`), so a
+/// link that leaks or sits unused can't be redeemed indefinitely.
+#[cfg(feature = "server")]
+const TOKEN_TTL: &str = "-7 days";
+
 /// Consume a confirmation token, marking the subscriber confirmed. Returns
-/// `true` when a pending token matched, `false` when it was unknown/expired.
+/// `true` when an unexpired token matched, `false` when it was unknown or older
+/// than [`TOKEN_TTL`].
 #[post("/api/subscribe/confirm", db: DbExtension)]
 pub async fn confirm_subscription(token: String) -> Result<bool> {
     let token = token.trim().to_string();
@@ -96,12 +88,15 @@ pub async fn confirm_subscription(token: String) -> Result<bool> {
         return Ok(false);
     }
 
-    let sub_id: Option<i64> =
-        sqlx::query_scalar("SELECT subscriber_id FROM subscriber_tokens WHERE token = ?")
-            .bind(&token)
-            .fetch_optional(&db.0)
-            .await
-            .map_err(sfe)?;
+    let sub_id: Option<i64> = sqlx::query_scalar(
+        "SELECT subscriber_id FROM subscriber_tokens \
+         WHERE token = ? AND created_at >= datetime('now', ?)",
+    )
+    .bind(&token)
+    .bind(TOKEN_TTL)
+    .fetch_optional(&db.0)
+    .await
+    .map_err(sfe)?;
 
     let Some(sub_id) = sub_id else {
         return Ok(false);

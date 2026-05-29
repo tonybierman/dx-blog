@@ -1,6 +1,14 @@
 -- Blog schema. Runs AFTER arium's migrator() (users, roles, sessions, …) and
 -- membership_migrator() (arium_resource_members). author_id / uploaded_by /
 -- user_id reference arium's `users.id`.
+--
+-- Foreign keys: enforcement is per-connection and enabled in main.rs via
+-- SqliteConnectOptions::foreign_keys(true). The REFERENCES … ON DELETE clauses
+-- below only bind on a freshly created table — SQLite can't ALTER a constraint
+-- onto an existing one — so databases created before these were added keep
+-- relying on the hand-rolled cascades in server::admin::delete_post. References
+-- into arium's user-owned tables use CASCADE / SET NULL so arium's own
+-- account-deletion flow isn't blocked by a dangling blog row.
 
 CREATE TABLE IF NOT EXISTS categories (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,8 +30,8 @@ CREATE TABLE IF NOT EXISTS posts (
     body_md            TEXT NOT NULL DEFAULT '',
     body_html          TEXT NOT NULL DEFAULT '',
     excerpt            TEXT NOT NULL DEFAULT '',
-    author_id          INTEGER NOT NULL,
-    category_id        INTEGER,
+    author_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    category_id        INTEGER REFERENCES categories(id) ON DELETE SET NULL,
     featured_image_url TEXT,
     status             TEXT NOT NULL DEFAULT 'draft'
                          CHECK (status IN ('draft', 'published', 'archived')),
@@ -36,16 +44,16 @@ CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
 CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category_id);
 
 CREATE TABLE IF NOT EXISTS post_tags (
-    post_id INTEGER NOT NULL,
-    tag_id  INTEGER NOT NULL,
+    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    tag_id  INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (post_id, tag_id)
 );
 CREATE INDEX IF NOT EXISTS idx_post_tags_tag ON post_tags(tag_id);
 
 CREATE TABLE IF NOT EXISTS comments (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    post_id     INTEGER NOT NULL,
-    author_id   INTEGER,           -- NULL for guests
+    post_id     INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    author_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,  -- NULL for guests
     guest_name  TEXT,
     guest_email TEXT,
     body        TEXT NOT NULL,
@@ -66,21 +74,24 @@ CREATE TABLE IF NOT EXISTS subscribers (
 -- token for that subscriber; confirming consumes (deletes) the row.
 CREATE TABLE IF NOT EXISTS subscriber_tokens (
     token         TEXT PRIMARY KEY,
-    subscriber_id INTEGER NOT NULL,
+    subscriber_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- Look up / delete a subscriber's tokens by subscriber_id (subscribe + confirm).
+CREATE INDEX IF NOT EXISTS idx_subscriber_tokens_subscriber
+    ON subscriber_tokens(subscriber_id);
 
 CREATE TABLE IF NOT EXISTS media (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     filename    TEXT NOT NULL,
     url         TEXT NOT NULL,
-    uploaded_by INTEGER NOT NULL,
+    uploaded_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS post_views (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    post_id      INTEGER NOT NULL,
+    post_id      INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
     viewed_at    TEXT NOT NULL DEFAULT (datetime('now')),
     referrer     TEXT,
     visitor_hash TEXT
@@ -89,7 +100,7 @@ CREATE INDEX IF NOT EXISTS idx_post_views_post ON post_views(post_id);
 
 -- Blog-specific profile fields (arium's users already has display_name/avatar_url).
 CREATE TABLE IF NOT EXISTS user_profiles (
-    user_id      INTEGER PRIMARY KEY,
+    user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     bio          TEXT,
     social_links TEXT  -- JSON
 );
@@ -101,20 +112,24 @@ CREATE TABLE IF NOT EXISTS site_settings (
 );
 
 -- Full-text search over title + body, kept in sync from `posts` via triggers.
+-- The FTS columns must be NAMED after the `posts` columns they shadow: with
+-- content='posts', a `rebuild` reads each FTS column from the same-named source
+-- column, so the body column has to be `body_md` (posts has no `body`). The
+-- triggers below feed `body_md` accordingly.
 CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
     title,
-    body,
+    body_md,
     content='posts',
     content_rowid='id'
 );
 
 CREATE TRIGGER IF NOT EXISTS posts_ai AFTER INSERT ON posts BEGIN
-    INSERT INTO posts_fts(rowid, title, body) VALUES (new.id, new.title, new.body_md);
+    INSERT INTO posts_fts(rowid, title, body_md) VALUES (new.id, new.title, new.body_md);
 END;
 CREATE TRIGGER IF NOT EXISTS posts_ad AFTER DELETE ON posts BEGIN
-    INSERT INTO posts_fts(posts_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body_md);
+    INSERT INTO posts_fts(posts_fts, rowid, title, body_md) VALUES ('delete', old.id, old.title, old.body_md);
 END;
 CREATE TRIGGER IF NOT EXISTS posts_au AFTER UPDATE ON posts BEGIN
-    INSERT INTO posts_fts(posts_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body_md);
-    INSERT INTO posts_fts(rowid, title, body) VALUES (new.id, new.title, new.body_md);
+    INSERT INTO posts_fts(posts_fts, rowid, title, body_md) VALUES ('delete', old.id, old.title, old.body_md);
+    INSERT INTO posts_fts(rowid, title, body_md) VALUES (new.id, new.title, new.body_md);
 END;

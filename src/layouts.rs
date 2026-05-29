@@ -11,9 +11,7 @@ use dioxus::prelude::*;
 use arium_dioxus::server::logout;
 use arium_dioxus::ui::use_permissions;
 
-use crate::auth_tokens::{
-    ANALYTICS_READ, COMMENTS_MODERATE, POSTS_WRITE, POSTS_WRITE_ANY, SETTINGS_WRITE, USERS_MANAGE,
-};
+use crate::auth_tokens::ADMIN_NAV_TOKENS;
 use crate::model::SiteMeta;
 use crate::server::settings::DEFAULT_SITE_TITLE;
 use crate::Route;
@@ -30,18 +28,7 @@ pub type SiteChrome = Resource<Result<SiteMeta>>;
 pub fn SiteHeader() -> Element {
     let perms = use_permissions();
     let authed = perms.is_authenticated();
-    let can_admin = authed
-        && [
-            POSTS_WRITE,
-            POSTS_WRITE_ANY,
-            COMMENTS_MODERATE,
-            USERS_MANAGE,
-            SETTINGS_WRITE,
-            ANALYTICS_READ,
-        ]
-        .iter()
-        .copied()
-        .any(|t| perms.has(t));
+    let can_admin = authed && ADMIN_NAV_TOKENS.iter().copied().any(|t| perms.has(t));
     let name = perms
         .profile()
         .map(|p| p.display().to_string())

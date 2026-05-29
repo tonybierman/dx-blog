@@ -55,6 +55,22 @@ pub fn require_perm(
     }
 }
 
+/// A pragmatic email sanity check: a single `@` with a non-empty local part and
+/// a dotted domain (non-empty labels on both sides of the last dot). Rejects the
+/// likes of `"a@b"` and `"@x.com"`. Not a full RFC validator — for a subscriber
+/// the confirmation email is the real proof. Shared by the subscribe flow and
+/// guest-comment validation so both apply the same rule.
+#[cfg(feature = "server")]
+pub fn looks_like_email(email: &str) -> bool {
+    let Some((local, domain)) = email.split_once('@') else {
+        return false;
+    };
+    if local.is_empty() || domain.contains('@') {
+        return false;
+    }
+    matches!(domain.rsplit_once('.'), Some((host, tld)) if !host.is_empty() && !tld.is_empty())
+}
+
 /// Render Markdown source to sanitized HTML for storage/display.
 #[cfg(feature = "server")]
 pub fn render_markdown(md: &str) -> String {

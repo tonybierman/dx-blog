@@ -5,7 +5,17 @@ use dioxus::prelude::*;
 use crate::model::{CommentView, RecentComment};
 
 #[cfg(feature = "server")]
-use crate::server::{sfe, DbExtension};
+use crate::server::{looks_like_email, sfe, DbExtension};
+
+/// Upper bounds on guest-supplied comment fields. The body is generous (a long
+/// comment is legitimate); name/email are short. Without caps an unauthenticated
+/// caller could store arbitrarily large blobs.
+#[cfg(feature = "server")]
+const MAX_BODY_LEN: usize = 5_000;
+#[cfg(feature = "server")]
+const MAX_NAME_LEN: usize = 100;
+#[cfg(feature = "server")]
+const MAX_EMAIL_LEN: usize = 254;
 
 /// The most recent approved comments across all published posts — backs the
 /// home "Recent comments" sidebar. Public.
@@ -67,6 +77,23 @@ pub async fn create_comment(
     if body.is_empty() {
         return Err(ServerFnError::new("Comment cannot be empty.").into());
     }
+    if body.chars().count() > MAX_BODY_LEN {
+        return Err(ServerFnError::new("Comment is too long.").into());
+    }
+
+    // Only accept comments on a post that actually exists and is published —
+    // otherwise anyone could POST arbitrary `post_id`s (including drafts or
+    // non-existent ids) and pile up rows attached to nothing visible.
+    let post_ok: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM posts WHERE id = ? AND status = 'published')",
+    )
+    .bind(post_id)
+    .fetch_one(&db.0)
+    .await
+    .map_err(sfe)?;
+    if !post_ok {
+        return Err(ServerFnError::new("Post not found.").into());
+    }
 
     let user = auth
         .current_user
@@ -77,10 +104,18 @@ pub async fn create_comment(
     let (author_id, gname, gemail) = match user {
         Some(uid) => (Some(uid), None, None),
         None => {
-            let name = guest_name.unwrap_or_default();
-            let email = guest_email.unwrap_or_default();
-            if name.trim().is_empty() || email.trim().is_empty() {
+            let name = guest_name.unwrap_or_default().trim().to_string();
+            let email = guest_email.unwrap_or_default().trim().to_lowercase();
+            if name.is_empty() || email.is_empty() {
                 return Err(ServerFnError::new("Guests must provide a name and email.").into());
+            }
+            if name.chars().count() > MAX_NAME_LEN || email.len() > MAX_EMAIL_LEN {
+                return Err(ServerFnError::new("Name or email is too long.").into());
+            }
+            // Same sanity check the subscribe flow uses — reject the obvious junk
+            // the old non-empty-only guard let through.
+            if !looks_like_email(&email) {
+                return Err(ServerFnError::new("Please enter a valid email address.").into());
             }
             (None, Some(name), Some(email))
         }

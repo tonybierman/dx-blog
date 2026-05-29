@@ -101,11 +101,8 @@ fn PostHead(post: crate::model::PostDetail, base_url: String) -> Element {
             document::Meta { name: "twitter:image", content: "{img}" }
         }
         // Normalize the stored SQLite datetime ("YYYY-MM-DD HH:MM:SS", UTC) to
-        // the ISO 8601 form Open Graph expects.
-        if let Some(when) = post.published_at.as_ref().map(|w| {
-            let t = w.replace(' ', "T");
-            if t.ends_with('Z') || t.contains('+') { t } else { format!("{t}Z") }
-        }) {
+        // the ISO 8601 form Open Graph expects (shared with the feed/sitemap).
+        if let Some(when) = post.published_at.as_ref().map(|w| crate::model::to_rfc3339(w)) {
             document::Meta { property: "article:published_time", content: "{when}" }
         }
         document::Meta { property: "article:author", content: "{post.author_name}" }
@@ -141,7 +138,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
         });
     });
 
-    let is_draft = post.status != "published";
+    let is_draft = post.status != crate::model::STATUS_PUBLISHED;
 
     rsx! {
         article {
@@ -199,21 +196,32 @@ fn CommentSection(post_id: i64) -> Element {
     let mut name = use_signal(String::new);
     let mut email = use_signal(String::new);
     let mut status = use_signal(String::new);
+    // Guards against a double-submit while the request is in flight.
+    let mut submitting = use_signal(|| false);
 
     let submit = move |_| {
+        if submitting() {
+            return;
+        }
         let b = body();
         let (n, e) = (name(), email());
+        submitting.set(true);
         spawn(async move {
             let gname = if n.is_empty() { None } else { Some(n) };
             let gemail = if e.is_empty() { None } else { Some(e) };
             match create_comment(post_id, b, gname, gemail).await {
                 Ok(()) => {
+                    // Clear the whole form, not just the body, so a guest doesn't
+                    // resubmit their name/email by accident.
                     body.set(String::new());
+                    name.set(String::new());
+                    email.set(String::new());
                     status.set("Thanks! Your comment is awaiting approval.".into());
                     comments.restart();
                 }
                 Err(err) => status.set(arium_dioxus::friendly_server_error(err)),
             }
+            submitting.set(false);
         });
     };
 
@@ -262,9 +270,10 @@ fn CommentSection(post_id: i64) -> Element {
                     oninput: move |e| body.set(e.value()),
                 }
                 button {
-                    class: "rounded bg-brand-600 px-4 py-1.5 text-sm font-medium hover:bg-brand-500",
+                    class: "rounded bg-brand-600 px-4 py-1.5 text-sm font-medium hover:bg-brand-500 disabled:opacity-50",
+                    disabled: submitting(),
                     onclick: submit,
-                    "Post comment"
+                    if submitting() { "Posting…" } else { "Post comment" }
                 }
                 if !status().is_empty() {
                     p { class: "text-sm text-white/60", "{status}" }

@@ -18,6 +18,18 @@ use crate::server::{
 
 // ---------------------------------------------------------------- helper
 
+/// Reject a `status` outside the lifecycle whitelist before it reaches the DB.
+/// The `posts` table has a matching `CHECK`, but binding an invalid value would
+/// surface a raw sqlx CHECK error to the client; this returns a friendly one.
+#[cfg(feature = "server")]
+fn validate_status(status: &str) -> std::result::Result<(), ServerFnError> {
+    if crate::model::POST_STATUSES.contains(&status) {
+        Ok(())
+    } else {
+        Err(ServerFnError::new("Invalid status."))
+    }
+}
+
 /// Edit/delete authorization: Editor+ on the post, OR a global admin token.
 #[cfg(feature = "server")]
 pub(crate) async fn can_edit_post(
@@ -60,6 +72,7 @@ pub async fn create_post(
     status: String,
 ) -> Result<i64> {
     let uid = require_perm(&auth, POSTS_WRITE)?;
+    validate_status(&status)?;
     let slug = unique_slug(&db.0, "posts", &title).await.map_err(sfe)?;
     let body_html = render_markdown(&body_md);
 
@@ -119,6 +132,7 @@ pub async fn update_post(
     status: String,
 ) -> Result<()> {
     can_edit_post(&auth, &db.0, &authority, id).await?;
+    validate_status(&status)?;
     let body_html = render_markdown(&body_md);
 
     sqlx::query(
@@ -327,7 +341,7 @@ pub async fn admin_list_comments(status: Option<String>) -> Result<Vec<CommentVi
 #[post("/api/admin/comments/moderate", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn moderate_comment(id: i64, status: String) -> Result<()> {
     require_perm(&auth, COMMENTS_MODERATE)?;
-    if !["pending", "approved", "rejected"].contains(&status.as_str()) {
+    if !crate::model::COMMENT_STATUSES.contains(&status.as_str()) {
         return Err(ServerFnError::new("Invalid status.").into());
     }
     sqlx::query("UPDATE comments SET status = ? WHERE id = ?")
@@ -376,6 +390,14 @@ pub async fn create_category(name: String, description: Option<String>) -> Resul
 #[post("/api/admin/categories/delete", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn delete_category(id: i64) -> Result<()> {
     require_perm(&auth, SETTINGS_WRITE)?;
+    // Detach posts in this category so their `category_id` doesn't dangle. New
+    // databases get this for free from the FK's ON DELETE SET NULL, but ones
+    // created before that constraint was added rely on this explicit update.
+    sqlx::query("UPDATE posts SET category_id = NULL WHERE category_id = ?")
+        .bind(id)
+        .execute(&db.0)
+        .await
+        .map_err(sfe)?;
     sqlx::query("DELETE FROM categories WHERE id = ?")
         .bind(id)
         .execute(&db.0)
@@ -550,14 +572,30 @@ pub async fn upload_media(filename: String, data_base64: String) -> Result<Media
 
 #[post("/api/admin/media/delete", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn delete_media(id: i64) -> Result<()> {
-    require_perm(&auth, MEDIA_UPLOAD)?;
+    let uid = require_perm(&auth, MEDIA_UPLOAD)?;
 
-    // Grab the stored url first so we can unlink the file after dropping the row.
-    let url: Option<String> = sqlx::query_scalar("SELECT url FROM media WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&db.0)
-        .await
-        .map_err(sfe)?;
+    // Grab the stored url + owner first: the url so we can unlink the file after
+    // dropping the row, the owner to enforce that an author may only delete their
+    // own uploads. The MEDIA_UPLOAD token alone would otherwise let any author
+    // delete anyone's media (IDOR within the role); a global admin overrides.
+    let row: Option<(String, i64)> =
+        sqlx::query_as("SELECT url, uploaded_by FROM media WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&db.0)
+            .await
+            .map_err(sfe)?;
+    let Some((url, uploaded_by)) = row else {
+        return Ok(()); // already gone — nothing to do
+    };
+    let is_admin = auth
+        .current_user
+        .as_ref()
+        .map(|u| u.permissions.contains(POSTS_WRITE_ANY))
+        .unwrap_or(false);
+    if uploaded_by != uid && !is_admin {
+        return Err(ServerFnError::new("You can only delete media you uploaded.").into());
+    }
+    let url = Some(url);
 
     sqlx::query("DELETE FROM media WHERE id = ?")
         .bind(id)

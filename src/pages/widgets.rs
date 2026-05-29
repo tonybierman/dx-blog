@@ -10,6 +10,25 @@ use crate::server::posts::featured_posts;
 use crate::server::taxonomy::{list_categories, list_tags};
 use crate::Route;
 
+/// Render the four states of a sidebar list `Resource<Result<Vec<_>>>` so each
+/// sidebar only spells out its non-empty case. The loaded-but-empty / error /
+/// pending arms — identical across every sidebar — live here once. The bound
+/// `$list` is already `.clone()`d, so the body owns it and the read guard is
+/// released before render.
+macro_rules! sidebar_states {
+    ($res:expr, empty: $empty:expr, $list:ident => $body:expr) => {
+        match &*$res.read() {
+            Some(Ok($list)) if !$list.is_empty() => {
+                let $list = $list.clone();
+                $body
+            }
+            Some(Ok(_)) => rsx! { p { class: "text-white/40", {$empty} } },
+            Some(Err(_)) => rsx! { p { class: "text-white/40", "—" } },
+            None => rsx! { p { class: "text-white/40", "…" } },
+        }
+    };
+}
+
 /// Sidebar listing categories as links to their feeds.
 #[component]
 pub fn CategoryList() -> Element {
@@ -17,24 +36,19 @@ pub fn CategoryList() -> Element {
     rsx! {
         div { class: "text-sm",
             h3 { class: "mb-2 font-semibold text-white/80", "Categories" }
-            match &*cats.read() {
-                Some(Ok(list)) if !list.is_empty() => rsx! {
-                    ul { class: "space-y-1",
-                        for c in list.clone() {
-                            li { key: "{c.id}",
-                                Link {
-                                    to: Route::CategoryFeed { slug: c.slug.clone() },
-                                    class: "text-white/60 hover:text-white hover:underline",
-                                    "{c.name}"
-                                }
+            {sidebar_states!(cats, empty: "None yet", list => rsx! {
+                ul { class: "space-y-1",
+                    for c in list {
+                        li { key: "{c.id}",
+                            Link {
+                                to: Route::CategoryFeed { slug: c.slug.clone() },
+                                class: "text-white/60 hover:text-white hover:underline",
+                                "{c.name}"
                             }
                         }
                     }
-                },
-                Some(Ok(_)) => rsx! { p { class: "text-white/40", "None yet" } },
-                Some(Err(_)) => rsx! { p { class: "text-white/40", "—" } },
-                None => rsx! { p { class: "text-white/40", "…" } },
-            }
+                }
+            })}
         }
     }
 }
@@ -51,23 +65,18 @@ pub fn TagList() -> Element {
     rsx! {
         div { class: "mt-6 text-sm",
             h3 { class: "mb-3 font-semibold text-white/80", "Tags" }
-            match &*tags.read() {
-                Some(Ok(list)) if !list.is_empty() => rsx! {
-                    div { class: "flex flex-wrap gap-2",
-                        for t in list.clone() {
-                            TagPill {
-                                key: "{t.slug}",
-                                name: t.name.clone(),
-                                slug: t.slug.clone(),
-                                active: active_slug.as_deref() == Some(t.slug.as_str()),
-                            }
+            {sidebar_states!(tags, empty: "None yet", list => rsx! {
+                div { class: "flex flex-wrap gap-2",
+                    for t in list {
+                        TagPill {
+                            key: "{t.slug}",
+                            name: t.name.clone(),
+                            slug: t.slug.clone(),
+                            active: active_slug.as_deref() == Some(t.slug.as_str()),
                         }
                     }
-                },
-                Some(Ok(_)) => rsx! { p { class: "text-white/40", "None yet" } },
-                Some(Err(_)) => rsx! { p { class: "text-white/40", "—" } },
-                None => rsx! { p { class: "text-white/40", "…" } },
-            }
+                }
+            })}
         }
     }
 }
@@ -95,24 +104,19 @@ pub fn FeaturedPosts() -> Element {
     rsx! {
         div { class: "text-sm",
             h3 { class: "mb-2 font-semibold text-white/80", "Featured" }
-            match &*featured.read() {
-                Some(Ok(list)) if !list.is_empty() => rsx! {
-                    ul { class: "space-y-2",
-                        for p in list.clone() {
-                            li { key: "{p.id}",
-                                Link {
-                                    to: Route::PostDetail { slug: p.slug.clone() },
-                                    class: "text-white/60 hover:text-white hover:underline",
-                                    "{p.title}"
-                                }
+            {sidebar_states!(featured, empty: "No posts yet", list => rsx! {
+                ul { class: "space-y-2",
+                    for p in list {
+                        li { key: "{p.id}",
+                            Link {
+                                to: Route::PostDetail { slug: p.slug.clone() },
+                                class: "text-white/60 hover:text-white hover:underline",
+                                "{p.title}"
                             }
                         }
                     }
-                },
-                Some(Ok(_)) => rsx! { p { class: "text-white/40", "No posts yet" } },
-                Some(Err(_)) => rsx! { p { class: "text-white/40", "—" } },
-                None => rsx! { p { class: "text-white/40", "…" } },
-            }
+                }
+            })}
         }
     }
 }
@@ -124,28 +128,23 @@ pub fn RecentComments() -> Element {
     rsx! {
         div { class: "mt-6 text-sm",
             h3 { class: "mb-2 font-semibold text-white/80", "Recent comments" }
-            match &*recent.read() {
-                Some(Ok(list)) if !list.is_empty() => rsx! {
-                    ul { class: "space-y-3",
-                        for c in list.clone() {
-                            li { key: "{c.id}",
-                                p { class: "line-clamp-2 text-white/60", "“{c.body}”" }
-                                div { class: "mt-0.5 text-xs text-white/40",
-                                    span { "{c.display_name} on " }
-                                    Link {
-                                        to: Route::PostDetail { slug: c.post_slug.clone() },
-                                        class: "hover:underline",
-                                        "{c.post_title}"
-                                    }
+            {sidebar_states!(recent, empty: "No comments yet", list => rsx! {
+                ul { class: "space-y-3",
+                    for c in list {
+                        li { key: "{c.id}",
+                            p { class: "line-clamp-2 text-white/60", "“{c.body}”" }
+                            div { class: "mt-0.5 text-xs text-white/40",
+                                span { "{c.display_name} on " }
+                                Link {
+                                    to: Route::PostDetail { slug: c.post_slug.clone() },
+                                    class: "hover:underline",
+                                    "{c.post_title}"
                                 }
                             }
                         }
                     }
-                },
-                Some(Ok(_)) => rsx! { p { class: "text-white/40", "No comments yet" } },
-                Some(Err(_)) => rsx! { p { class: "text-white/40", "—" } },
-                None => rsx! { p { class: "text-white/40", "…" } },
-            }
+                }
+            })}
         }
     }
 }

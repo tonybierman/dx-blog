@@ -2,7 +2,7 @@
 
 use dioxus::prelude::*;
 
-use crate::model::{PostDetail, PostFeed, PER_PAGE};
+use crate::model::{page_offset, PostDetail, PostFeed, PER_PAGE};
 
 #[cfg(feature = "server")]
 use crate::server::{sfe, DbExtension, POST_CARD_COLUMNS, POST_CARD_JOINS};
@@ -16,8 +16,7 @@ pub async fn list_posts(
 ) -> Result<PostFeed> {
     use crate::model::PostCard;
     let pool = &db.0;
-    let page = page.max(1);
-    let offset = (page - 1) * PER_PAGE;
+    let (page, offset) = page_offset(page);
 
     let items = sqlx::query_as::<_, PostCard>(&format!(
         "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} \
@@ -59,12 +58,7 @@ pub async fn list_posts(
     .await
     .map_err(sfe)?;
 
-    Ok(PostFeed {
-        items,
-        total,
-        page,
-        per_page: PER_PAGE,
-    })
+    Ok(PostFeed::new(items, total, page))
 }
 
 /// All published posts, newest first — backs the Masonry archive. `#[post]`
@@ -73,8 +67,7 @@ pub async fn list_posts(
 pub async fn list_archive(page: i64) -> Result<PostFeed> {
     use crate::model::PostCard;
     let pool = &db.0;
-    let page = page.max(1);
-    let offset = (page - 1) * PER_PAGE;
+    let (page, offset) = page_offset(page);
 
     let items = sqlx::query_as::<_, PostCard>(&format!(
         "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} \
@@ -93,12 +86,7 @@ pub async fn list_archive(page: i64) -> Result<PostFeed> {
         .await
         .map_err(sfe)?;
 
-    Ok(PostFeed {
-        items,
-        total,
-        page,
-        per_page: PER_PAGE,
-    })
+    Ok(PostFeed::new(items, total, page))
 }
 
 /// Published posts authored by a given username, paginated.
@@ -106,8 +94,7 @@ pub async fn list_archive(page: i64) -> Result<PostFeed> {
 pub async fn posts_by_author(username: String, page: i64) -> Result<PostFeed> {
     use crate::model::PostCard;
     let pool = &db.0;
-    let page = page.max(1);
-    let offset = (page - 1) * PER_PAGE;
+    let (page, offset) = page_offset(page);
 
     let items = sqlx::query_as::<_, PostCard>(&format!(
         "SELECT {POST_CARD_COLUMNS} FROM posts p {POST_CARD_JOINS} \
@@ -134,12 +121,7 @@ pub async fn posts_by_author(username: String, page: i64) -> Result<PostFeed> {
     .await
     .map_err(sfe)?;
 
-    Ok(PostFeed {
-        items,
-        total,
-        page,
-        per_page: PER_PAGE,
-    })
+    Ok(PostFeed::new(items, total, page))
 }
 
 /// The most-viewed published posts — backs the home "Featured" sidebar. Public;

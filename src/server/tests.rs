@@ -8,15 +8,23 @@
 
 use crate::server::{render_markdown, unique_slug};
 use arium_dioxus::pool::Pool;
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::str::FromStr;
 
 /// A one-connection in-memory pool with the blog schema applied. `max_connections(1)`
 /// keeps every query on the same `:memory:` database (separate connections would
 /// each get their own empty one).
+///
+/// Foreign keys are turned OFF here: sqlx defaults them ON, but these tests apply
+/// only the blog schema, not arium's `users` table that `posts.author_id` (and
+/// friends) now reference — so a bare `author_id` would otherwise trip the FK.
 async fn test_pool() -> Pool {
+    let opts = SqliteConnectOptions::from_str("sqlite::memory:")
+        .expect("parse in-memory url")
+        .foreign_keys(false);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect("sqlite::memory:")
+        .connect_with(opts)
         .await
         .expect("open in-memory sqlite");
     sqlx::raw_sql(include_str!("../../migrations/0001_blog.sql"))
@@ -28,8 +36,8 @@ async fn test_pool() -> Pool {
 
 /// Insert a minimal post row (enough columns to satisfy NOT NULLs). Returns id.
 async fn insert_post(pool: &Pool, title: &str, slug: &str) {
-    // author_id references arium's users in production, but there's no FK in the
-    // blog schema, so a bare id is fine for these unit tests.
+    // author_id references arium's users in production; FK enforcement is off in
+    // test_pool (no users table here), so a bare id is fine for these unit tests.
     sqlx::query("INSERT INTO posts (title, slug, author_id) VALUES (?, ?, 1)")
         .bind(title)
         .bind(slug)
@@ -71,6 +79,41 @@ fn render_markdown_drops_onclick_attributes() {
         !html.contains("onclick"),
         "event handlers must be stripped: {html}"
     );
+}
+
+// ---------------------------------------------------------------- email sanity check
+
+#[test]
+fn looks_like_email_accepts_and_rejects() {
+    use crate::server::looks_like_email;
+    assert!(looks_like_email("a@b.com"));
+    assert!(looks_like_email("first.last@sub.example.co"));
+    // The junk the old `contains('@') && len >= 3` guard let through:
+    assert!(!looks_like_email("a@b"), "needs a dotted domain");
+    assert!(!looks_like_email("@x.com"), "empty local part");
+    assert!(!looks_like_email("a@@b.com"), "double @");
+    assert!(!looks_like_email("nope"), "no @");
+    assert!(!looks_like_email("a@.com"), "empty domain label");
+}
+
+// ---------------------------------------------------------------- pagination + date helpers
+
+#[test]
+fn page_offset_clamps_and_computes() {
+    use crate::model::{page_offset, PER_PAGE};
+    assert_eq!(page_offset(0), (1, 0), "page < 1 clamps to 1");
+    assert_eq!(page_offset(-5), (1, 0));
+    assert_eq!(page_offset(1), (1, 0));
+    assert_eq!(page_offset(3), (3, 2 * PER_PAGE));
+}
+
+#[test]
+fn to_rfc3339_normalizes_sqlite_datetime() {
+    use crate::model::to_rfc3339;
+    assert_eq!(to_rfc3339("2024-01-02 03:04:05"), "2024-01-02T03:04:05Z");
+    // Already ISO 8601 — passed through unchanged.
+    assert_eq!(to_rfc3339("2024-01-02T03:04:05Z"), "2024-01-02T03:04:05Z");
+    assert_eq!(to_rfc3339(""), "");
 }
 
 // ---------------------------------------------------------------- slug uniqueness

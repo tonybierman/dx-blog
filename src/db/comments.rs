@@ -151,6 +151,40 @@ pub async fn fetch_comment_by_id_db(
     .await
 }
 
+/// Notification metadata for one comment plus its post's title/slug, for the
+/// site-wide admin live channel. Deliberately omits the comment body: the admin
+/// stream carries metadata only (see [`crate::model::AdminEvent`]). One round
+/// trip; no `published` filter, since admins moderate comments on any post.
+#[derive(sqlx::FromRow)]
+pub struct CommentWithPost {
+    pub id: i64,
+    pub post_id: i64,
+    pub display_name: String,
+    pub status: String,
+    pub post_title: String,
+    pub post_slug: String,
+}
+
+pub async fn comment_with_post_db(
+    pool: &SqlitePool,
+    id: i64,
+) -> Result<CommentWithPost, sqlx::Error> {
+    sqlx::query_as::<_, CommentWithPost>(
+        r#"
+        SELECT cm.id, cm.post_id,
+               COALESCE(u.display_name, u.username, cm.guest_name, 'Anonymous') AS display_name,
+               cm.status, p.title AS post_title, p.slug AS post_slug
+        FROM comments cm
+        JOIN posts p ON p.id = cm.post_id
+        LEFT JOIN users u ON u.id = cm.author_id
+        WHERE cm.id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn list_comments_admin_db(
     pool: &SqlitePool,
     status: Option<&str>,

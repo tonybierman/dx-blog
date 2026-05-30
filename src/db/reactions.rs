@@ -57,3 +57,15 @@ pub async fn reaction_total_db(pool: &SqlitePool, post_id: i64) -> Result<i64, s
         .fetch_one(pool)
         .await
 }
+
+/// A post's `(title, slug)`, for labelling the admin live activity feed. One
+/// indexed PK lookup; called on the (rate-limited) reaction path.
+pub async fn post_title_slug_db(
+    pool: &SqlitePool,
+    post_id: i64,
+) -> Result<(String, String), sqlx::Error> {
+    sqlx::query_as::<_, (String, String)>("SELECT title, slug FROM posts WHERE id = ?")
+        .bind(post_id)
+        .fetch_one(pool)
+        .await
+}

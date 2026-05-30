@@ -314,6 +314,13 @@ fn main() {
             .route(
                 "/api/live/{post_id}",
                 axum::routing::get(server::live::live_handler),
+            )
+            // Site-wide admin event stream (comments + reactions) for the live
+            // dashboard / moderation queue. Same raw-GET shape, but gated on
+            // COMMENTS_MODERATE inside the handler via the session cookie.
+            .route(
+                "/api/admin/live",
+                axum::routing::get(server::live::admin_live_handler),
             );
 
         // Permanent redirects from the names people (and feed readers) commonly
@@ -389,7 +396,7 @@ async fn mem_percent() -> Option<f64> {
     // Lines look like "MemTotal:       16331234 kB"; we want the first number.
     let kb = |key: &str| {
         info.lines()
-            .find_map(|l| l.strip_prefix(key)?.trim().split_whitespace().next())
+            .find_map(|l| l.strip_prefix(key)?.split_whitespace().next())
             .and_then(|n| n.parse::<f64>().ok())
     };
     let total = kb("MemTotal:")?;

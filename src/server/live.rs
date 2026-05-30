@@ -26,14 +26,15 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::extract::{Extension, Path};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::IntoResponse;
 use futures::{stream, Stream, StreamExt};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::model::LiveEvent;
+use crate::model::{AdminEvent, LiveEvent};
 
 /// The `axum::Extension` that carries the shared hub to every route and server
 /// fn. Mirrors `DbExtension`/`MailExtension` in `crate::server`.
@@ -49,6 +50,12 @@ const CHANNEL_CAP: usize = 256;
 /// replayed to a new connection and the hub's memory. Matches the client's
 /// `MAX_DATA_POINTS` so a fresh reader can be handed a full client buffer.
 const HISTORY_MAX: usize = 256;
+
+/// Capacity of the single site-wide admin channel. Larger than `CHANNEL_CAP`
+/// because reactions/claps across the whole site funnel through it; a slow admin
+/// that lags past this just skips frames (the dashboard's authoritative
+/// `analytics_summary` refetch reconciles any drift).
+const ADMIN_CHANNEL_CAP: usize = 512;
 
 /// One post's fan-out channel plus its live-reader tally.
 struct PostChannel {
@@ -76,16 +83,37 @@ struct HubState {
     history: HashMap<i64, HashMap<String, VecDeque<f64>>>,
 }
 
-/// In-memory registry of per-post live channels. Cheap to clone (it's always
-/// behind an `Arc`); all state is guarded by one `Mutex`.
-#[derive(Default)]
+/// In-memory registry of per-post live channels plus the one site-wide admin
+/// channel. Cheap to clone (it's always behind an `Arc`); per-post state is
+/// guarded by one `Mutex`, while the admin sender is internally synchronized so
+/// it needs no lock.
 pub struct LiveHub {
     state: Mutex<HubState>,
+    /// Site-wide admin broadcast. A singleton with no presence/GC: created once
+    /// and shared by every admin SSE connection. Carries [`AdminEvent`]s only
+    /// (notification metadata, never comment bodies).
+    admin_tx: broadcast::Sender<AdminEvent>,
 }
 
 impl LiveHub {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Arc::new(Self {
+            state: Mutex::new(HubState::default()),
+            admin_tx: broadcast::channel(ADMIN_CHANNEL_CAP).0,
+        })
+    }
+
+    /// Fan an [`AdminEvent`] out to every connected admin. A no-op when no admin
+    /// is currently listening (`send` only errors with zero receivers).
+    pub fn publish_admin(&self, event: AdminEvent) {
+        let _ = self.admin_tx.send(event);
+    }
+
+    /// Subscribe to the site-wide admin channel. Unlike [`subscribe`](Self::subscribe)
+    /// there's no presence or backlog — admins get events from connect onward and
+    /// rely on their authoritative fetches for the baseline.
+    pub fn subscribe_admin(&self) -> broadcast::Receiver<AdminEvent> {
+        self.admin_tx.subscribe()
     }
 
     /// Subscribe to a post's events and register one unit of presence. Returns
@@ -283,4 +311,68 @@ pub async fn live_handler(
     let stream = stream::iter(history).chain(live);
     // Keep-alive comments stop idle connections (and proxies) from timing out.
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+}
+
+/// Adapts the admin `BroadcastStream` into SSE events. The admin sibling of
+/// [`LiveStream`] — no presence guard (the admin channel has no presence), just
+/// the variant→event-name mapping and `Lagged` skipping.
+struct AdminStream {
+    inner: BroadcastStream<AdminEvent>,
+}
+
+impl Stream for AdminStream {
+    type Item = Result<Event, std::convert::Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            return match Pin::new(&mut self.inner).poll_next(cx) {
+                Poll::Ready(Some(Ok(ev))) => {
+                    let name = match &ev {
+                        AdminEvent::Comment { .. } => "comment",
+                        AdminEvent::Reaction { .. } => "reaction",
+                        AdminEvent::CommentRemoved { .. } => "comment_removed",
+                    };
+                    match serde_json::to_string(&ev) {
+                        Ok(json) => Poll::Ready(Some(Ok(Event::default().event(name).data(json)))),
+                        Err(_) => continue,
+                    }
+                }
+                Poll::Ready(Some(Err(BroadcastStreamRecvError::Lagged(_)))) => continue,
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Pending => Poll::Pending,
+            };
+        }
+    }
+}
+
+/// `GET /api/admin/live` — the site-wide admin event stream (comments +
+/// reactions), for the live dashboard and moderation queue.
+///
+/// Unlike `live_handler` this is NOT public: it carries cross-post moderation
+/// signals, so it requires a signed-in user holding `COMMENTS_MODERATE`. A
+/// browser `EventSource` can't set headers but does send the session cookie, and
+/// `install()` layers the session/auth middleware over this route, so the
+/// `Session` extractor resolves here. On refusal we return a real `403` (not an
+/// empty `200`) so the client stops rather than reconnecting forever.
+pub async fn admin_live_handler(
+    auth: arium_dioxus::auth::Session,
+    Extension(hub): HubExtension,
+) -> axum::response::Response {
+    let allowed = auth
+        .current_user
+        .as_ref()
+        .filter(|u| !u.anonymous)
+        .is_some_and(|u| {
+            u.permissions
+                .contains(crate::auth_tokens::COMMENTS_MODERATE)
+        });
+    if !allowed {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let stream = AdminStream {
+        inner: BroadcastStream::new(hub.subscribe_admin()),
+    };
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response()
 }

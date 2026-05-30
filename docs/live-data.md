@@ -180,3 +180,71 @@ To add, say, disk usage:
 
 No new component, event variant, or client code is needed — the path is
 topic-generic end to end.
+
+## Admin stream (live dashboard & moderation)
+
+Everything above is the **per-post, public** channel. The admin dashboard and the
+comment moderation queue ride a **separate, site-wide, authorized** channel for
+real-time comments and reactions across *all* posts.
+
+| Concern | Lives in |
+|---|---|
+| Admin event type (`AdminEvent`) | [`src/model/mod.rs`](../src/model/mod.rs) |
+| The admin channel + SSE route | [`src/server/live.rs`](../src/server/live.rs) |
+| Client hook (`use_admin_live`) | [`src/live.rs`](../src/live.rs) |
+| Dashboard tiles + activity feed | [`src/pages/admin/dashboard.rs`](../src/pages/admin/dashboard.rs) |
+| Live moderation queue | [`src/pages/admin/comments.rs`](../src/pages/admin/comments.rs) |
+
+### Why a separate channel
+
+- The per-post channels are **public and anonymous**. Pending (unmoderated)
+  comments must never ride them. So `AdminEvent` is a distinct type carrying
+  **notification metadata only — never a comment body** (who, which post, what
+  status). It is structurally impossible for an unmoderated body to leak onto the
+  public stream.
+- The admin channel is a **single, always-on** `broadcast::Sender<AdminEvent>` on
+  the hub — a singleton with no presence or GC (admins don't need presence), and
+  no backlog replay (the dashboard's `analytics_summary` fetch is the baseline).
+
+### The route
+
+`GET /api/admin/live` (`admin_live_handler`) is gated: it requires a signed-in
+user holding `COMMENTS_MODERATE`. A browser `EventSource` can't set headers but
+*does* send the session cookie, and `arium`'s `install()` layers the session
+middleware over the route, so the `Session` extractor resolves in this raw axum
+handler. On refusal it returns a real **403** (not an empty `200`) so the client
+stops rather than reconnecting forever.
+
+### What's published
+
+Alongside their existing public per-post publishes:
+- `create_comment` → `AdminEvent::Comment` for **every** new comment (pending *and*
+  approved) — the only live signal for pending comments.
+- `moderate_comment` → `AdminEvent::Comment` on **every** status change, so a
+  second open dashboard/queue reflects an approve/reject live.
+- `delete_comment` → `AdminEvent::CommentRemoved`.
+- `add_reaction` → `AdminEvent::Reaction` with the post label + authoritative total.
+
+### Dashboard update strategy
+
+Counts stay authoritative from `analytics_summary`; the stream layers live updates:
+- **Comments are rare** → each comment event calls `summary.restart()` to refetch
+  authoritative tiles (`comment_count`, `pending_comment_count`, …).
+- **Reactions are frequent** → never refetch per clap; a local `reaction_delta` is
+  added to the fetched `reaction_count` for the Reactions tile, and the next
+  comment-driven `restart()` reconciles any drift from a dropped (`Lagged`) frame.
+- The activity feed is rendered only for `COMMENTS_MODERATE` holders; reactions
+  coalesce per post so a clap storm can't flood it.
+
+The moderation queue (`AdminComments`) simply watches the hook's `comment_tick`
+and re-runs its `admin_list_comments` fetch — which is where the full, authorized
+comment bodies come from.
+
+### Constraints
+
+- Same **single-process** caveat as the per-post hub.
+- **No backlog**: the admin feed is "since page load"; on reconnect an admin
+  misses events in the gap, but the authoritative fetch + `restart()` keep tiles
+  correct.
+- Live updates require `COMMENTS_MODERATE`; an analytics-only user sees the
+  dashboard tiles (static, refetched on navigation) but no live feed.

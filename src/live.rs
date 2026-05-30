@@ -158,3 +158,189 @@ pub fn use_live(post_id: i64) -> LiveHandle {
 
     handle
 }
+
+/// Cap on retained admin activity rows. The feed is "since page load"; older
+/// rows drop off the front.
+#[cfg(feature = "web")]
+const MAX_ACTIVITY: usize = 50;
+
+/// One row in the admin activity feed. A client render artifact (never crosses
+/// the wire), like [`ClapBurst`]. `key` is a monotonic render key.
+#[derive(Clone, PartialEq)]
+pub struct ActivityItem {
+    pub key: u64,
+    pub post_title: String,
+    pub post_slug: String,
+    pub kind: ActivityKind,
+}
+
+/// What an [`ActivityItem`] represents.
+// Constructed only in the web-gated stream loop; on the server build the
+// variants are matched (in the dashboard feed) but never built, which reads as
+// dead code there.
+#[cfg_attr(not(feature = "web"), allow(dead_code))]
+#[derive(Clone, PartialEq)]
+pub enum ActivityKind {
+    /// A comment, with its id (for dedupe/removal) and current moderation status.
+    Comment {
+        id: i64,
+        who: String,
+        status: String,
+    },
+    /// Reactions on a post, coalesced into one row carrying the latest total.
+    Reaction { total: i64 },
+}
+
+/// Site-wide admin live state for the dashboard / moderation queue. Like
+/// [`LiveHandle`] it's all `Signal`s, so the handle is `Copy` and threads into
+/// child components as a prop.
+#[derive(Clone, Copy, PartialEq)]
+pub struct AdminLiveHandle {
+    /// Recent activity rows (newest last), capped and coalesced.
+    pub activity: Signal<Vec<ActivityItem>>,
+    /// Bumped on every comment create/moderate/remove event — pages watch this
+    /// to refetch authoritative data (counts, the moderation list).
+    pub comment_tick: Signal<u64>,
+    /// Count of reaction events seen since load, added to the fetched baseline
+    /// for a live site-wide reaction tile (best-effort; drift self-heals on the
+    /// next authoritative refetch).
+    pub reaction_delta: Signal<i64>,
+}
+
+/// Open (on the wasm client) the site-wide admin event channel and expose its
+/// state as signals. Connects only when `enabled` (the caller passes whether the
+/// user holds `COMMENTS_MODERATE` — the stream 403s otherwise). On the server
+/// build, or when not enabled, this returns inert defaults.
+pub fn use_admin_live(enabled: bool) -> AdminLiveHandle {
+    // Declared unconditionally so the handle type matches on both targets.
+    let activity = use_signal(Vec::<ActivityItem>::new);
+    let comment_tick = use_signal(|| 0u64);
+    let reaction_delta = use_signal(|| 0i64);
+    let handle = AdminLiveHandle {
+        activity,
+        comment_tick,
+        reaction_delta,
+    };
+
+    #[cfg(feature = "web")]
+    {
+        use futures_util::StreamExt;
+        use gloo_net::eventsource::futures::{EventSource, EventSourceSubscription};
+
+        let mut activity = activity;
+        let mut comment_tick = comment_tick;
+        let mut reaction_delta = reaction_delta;
+
+        // Reactive on `enabled` so the connection opens once permissions resolve
+        // to true (and tears down if it flips back).
+        use_future(use_reactive!(|(enabled,)| async move {
+            if !enabled {
+                return;
+            }
+            let Ok(mut es) = EventSource::new("/api/admin/live") else {
+                return;
+            };
+            let streams: Vec<std::pin::Pin<Box<EventSourceSubscription>>> =
+                ["comment", "reaction", "comment_removed"]
+                    .into_iter()
+                    .filter_map(|name| es.subscribe(name).ok())
+                    .map(Box::pin)
+                    .collect();
+            let mut merged = futures_util::stream::select_all(streams);
+            let _es = &es;
+
+            let mut next_key = 0u64;
+            while let Some(Ok((_name, msg))) = merged.next().await {
+                let Some(text) = msg.data().as_string() else {
+                    continue;
+                };
+                let Ok(event) = serde_json::from_str::<crate::model::AdminEvent>(&text) else {
+                    continue;
+                };
+                match event {
+                    crate::model::AdminEvent::Comment {
+                        id,
+                        post_title,
+                        post_slug,
+                        display_name,
+                        status,
+                        ..
+                    } => {
+                        comment_tick += 1;
+                        activity.with_mut(|v| {
+                            // Update in place if we've already seen this comment
+                            // (e.g. a status change), else add a new row.
+                            if let Some(it) = v.iter_mut().find(|it| {
+                                matches!(&it.kind, ActivityKind::Comment { id: cid, .. } if *cid == id)
+                            }) {
+                                it.kind = ActivityKind::Comment {
+                                    id,
+                                    who: display_name,
+                                    status,
+                                };
+                            } else {
+                                next_key += 1;
+                                v.push(ActivityItem {
+                                    key: next_key,
+                                    post_title,
+                                    post_slug,
+                                    kind: ActivityKind::Comment {
+                                        id,
+                                        who: display_name,
+                                        status,
+                                    },
+                                });
+                                let overflow = v.len().saturating_sub(MAX_ACTIVITY);
+                                if overflow > 0 {
+                                    v.drain(0..overflow);
+                                }
+                            }
+                        });
+                    }
+                    crate::model::AdminEvent::Reaction {
+                        post_slug,
+                        post_title,
+                        total,
+                        ..
+                    } => {
+                        reaction_delta += 1;
+                        activity.with_mut(|v| {
+                            // Coalesce reactions per post so a clap storm doesn't
+                            // flood the feed — update that post's running total.
+                            if let Some(it) = v.iter_mut().find(|it| {
+                                it.post_slug == post_slug
+                                    && matches!(it.kind, ActivityKind::Reaction { .. })
+                            }) {
+                                it.kind = ActivityKind::Reaction { total };
+                            } else {
+                                next_key += 1;
+                                v.push(ActivityItem {
+                                    key: next_key,
+                                    post_title,
+                                    post_slug,
+                                    kind: ActivityKind::Reaction { total },
+                                });
+                                let overflow = v.len().saturating_sub(MAX_ACTIVITY);
+                                if overflow > 0 {
+                                    v.drain(0..overflow);
+                                }
+                            }
+                        });
+                    }
+                    crate::model::AdminEvent::CommentRemoved { id } => {
+                        comment_tick += 1;
+                        activity.with_mut(|v| {
+                            v.retain(|it| {
+                                !matches!(&it.kind, ActivityKind::Comment { id: cid, .. } if *cid == id)
+                            });
+                        });
+                    }
+                }
+            }
+        }));
+    }
+    // `enabled` is only read on the web target; keep it "used" on the server.
+    let _ = enabled;
+
+    handle
+}

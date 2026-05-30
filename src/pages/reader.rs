@@ -13,6 +13,7 @@ use crate::components::dropdown_menu::{
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 };
 use crate::components::input::Input;
+use crate::components::textarea::Textarea;
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
 use crate::live::{use_live, LiveHandle};
 use crate::model::CommentView;
@@ -479,25 +480,25 @@ fn CommentSection(post_id: i64, live: LiveHandle) -> Element {
                 h3 { class: "font-medium", "Leave a comment" }
                 if !logged_in {
                     div { class: "flex gap-2",
-                        input {
-                            class: "w-1/2 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                        Input {
+                            class: "w-1/2",
                             placeholder: "Name",
                             value: "{name}",
-                            oninput: move |e| name.set(e.value()),
+                            oninput: move |e: FormEvent| name.set(e.value()),
                         }
-                        input {
-                            class: "w-1/2 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                        Input {
+                            class: "w-1/2",
                             placeholder: "Email",
                             value: "{email}",
-                            oninput: move |e| email.set(e.value()),
+                            oninput: move |e: FormEvent| email.set(e.value()),
                         }
                     }
                 }
-                textarea {
-                    class: "h-24 w-full rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                Textarea {
+                    class: "h-24 w-full",
                     placeholder: "Your comment…",
                     value: "{body}",
-                    oninput: move |e| body.set(e.value()),
+                    oninput: move |e: FormEvent| body.set(e.value()),
                 }
                 Button {
                     variant: ButtonVariant::Primary,
@@ -854,12 +855,12 @@ pub fn Subscribe() -> Element {
                 h1 { class: "text-3xl font-bold", "Subscribe" }
                 p { class: "max-w-md text-white/60", "Get new posts in your inbox. No spam." }
                 div { class: "flex w-full max-w-md gap-2",
-                    input {
-                        class: "flex-1 rounded border border-white/15 bg-transparent px-3 py-2",
+                    Input {
+                        class: "flex-1",
                         r#type: "email",
                         placeholder: "you@example.com",
                         value: "{email}",
-                        oninput: move |e| email.set(e.value()),
+                        oninput: move |e: FormEvent| email.set(e.value()),
                     }
                     Button {
                         variant: ButtonVariant::Primary,

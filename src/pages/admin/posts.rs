@@ -5,6 +5,9 @@ use dioxus_sdk_time::use_debounce;
 use std::time::Duration;
 
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::input::Input;
+use crate::components::select::{Select, SelectOption};
+use crate::components::textarea::Textarea;
 use crate::model::{PostEditData, POST_STATUSES, STATUS_DRAFT};
 use crate::pages::widgets::list_states;
 use crate::server::admin::{
@@ -47,24 +50,24 @@ pub fn AdminPostList() -> Element {
             }
             div { class: "mb-4 flex items-center gap-3 text-sm",
                 label { class: "text-white/50", "Status" }
-                select {
-                    class: "rounded border border-white/15 bg-transparent px-2 py-1.5",
-                    onchange: move |e| status_filter.set(e.value()),
-                    option { value: "", selected: status_filter().is_empty(), "All" }
-                    for s in POST_STATUSES {
-                        option { value: "{s}", selected: status_filter() == s, "{s}" }
-                    }
+                Select::<String> {
+                    default_value: Some(status_filter()),
+                    on_value_change: move |v: Option<String>| status_filter.set(v.unwrap_or_default()),
+                    SelectOption::<String> { index: 0usize, value: String::new(), "All" }
+                    {POST_STATUSES.iter().enumerate().map(|(i, s)| rsx! {
+                        SelectOption::<String> { key: "{s}", index: i + 1, value: s.to_string(), "{s}" }
+                    })}
                 }
                 label { class: "ml-3 text-white/50", "Sort" }
-                select {
-                    class: "rounded border border-white/15 bg-transparent px-2 py-1.5",
-                    onchange: move |e| sort.set(e.value()),
-                    option { value: "recent", selected: sort() == "recent", "Recently updated" }
-                    option { value: "oldest", selected: sort() == "oldest", "Oldest updated" }
-                    option { value: "title", selected: sort() == "title", "Title A–Z" }
-                    option { value: "title_desc", selected: sort() == "title_desc", "Title Z–A" }
-                    option { value: "status", selected: sort() == "status", "Status" }
-                    option { value: "published", selected: sort() == "published", "Published date" }
+                Select::<String> {
+                    default_value: Some(sort()),
+                    on_value_change: move |v: Option<String>| { if let Some(v) = v { sort.set(v); } },
+                    SelectOption::<String> { index: 0usize, value: "recent".to_string(), "Recently updated" }
+                    SelectOption::<String> { index: 1usize, value: "oldest".to_string(), "Oldest updated" }
+                    SelectOption::<String> { index: 2usize, value: "title".to_string(), "Title A–Z" }
+                    SelectOption::<String> { index: 3usize, value: "title_desc".to_string(), "Title Z–A" }
+                    SelectOption::<String> { index: 4usize, value: "status".to_string(), "Status" }
+                    SelectOption::<String> { index: 5usize, value: "published".to_string(), "Published date" }
                 }
             }
             {list_states!(posts, empty: "No posts yet.", list => rsx! {
@@ -182,12 +185,12 @@ fn EditorForm(initial: PostEditData) -> Element {
     let mut fullscreen = use_signal(|| false);
     let render_textarea = move |class: &'static str| {
         rsx! {
-            textarea {
+            Textarea {
                 class,
                 placeholder: "Write in Markdown…",
                 value: "{body}",
-                oninput: move |e| body.set(e.value()),
-                onkeydown: move |e| {
+                oninput: move |e: FormEvent| body.set(e.value()),
+                onkeydown: move |e: KeyboardEvent| {
                     if e.key() == Key::Escape && fullscreen() {
                         fullscreen.set(false);
                     }
@@ -239,26 +242,26 @@ fn EditorForm(initial: PostEditData) -> Element {
         div { class: "grid gap-6 lg:grid-cols-2",
             // Left: form
             div { class: "space-y-3",
-                input {
-                    class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-lg font-semibold",
+                Input {
+                    class: "w-full text-lg font-semibold",
                     placeholder: "Title",
                     value: "{title}",
-                    oninput: move |e| title.set(e.value()),
+                    oninput: move |e: FormEvent| title.set(e.value()),
                 }
-                input {
-                    class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
+                Input {
+                    class: "w-full text-sm",
                     placeholder: "Excerpt",
                     value: "{excerpt}",
-                    oninput: move |e| excerpt.set(e.value()),
+                    oninput: move |e: FormEvent| excerpt.set(e.value()),
                 }
                 // Featured image: URL field plus a media-library picker.
                 div { class: "space-y-2",
                     div { class: "flex gap-2",
-                        input {
-                            class: "flex-1 rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
+                        Input {
+                            class: "flex-1 text-sm",
                             placeholder: "Featured image URL",
                             value: "{featured}",
-                            oninput: move |e| {
+                            oninput: move |e: FormEvent| {
                                 let v = e.value();
                                 featured.set(v.clone());
                                 debounce_featured.action(v);
@@ -306,22 +309,24 @@ fn EditorForm(initial: PostEditData) -> Element {
                     }
                 }
                 div { class: "flex gap-3",
-                    select {
-                        class: "rounded border border-white/15 bg-transparent px-2 py-1.5 text-sm",
-                        onchange: move |e| category_id.set(e.value().parse::<i64>().ok()),
-                        option { value: "", "— Category —" }
+                    Select::<String> {
+                        default_value: Some(category_id().map(|id| id.to_string()).unwrap_or_default()),
+                        on_value_change: move |v: Option<String>| {
+                            category_id.set(v.and_then(|s| s.parse::<i64>().ok()))
+                        },
+                        SelectOption::<String> { index: 0usize, value: String::new(), "— Category —" }
                         if let Some(Ok(list)) = &*cats.read() {
-                            for c in list.clone() {
-                                option { value: "{c.id}", selected: category_id() == Some(c.id), "{c.name}" }
-                            }
+                            {list.clone().into_iter().enumerate().map(|(i, c)| rsx! {
+                                SelectOption::<String> { key: "{c.id}", index: i + 1, value: "{c.id}", "{c.name}" }
+                            })}
                         }
                     }
-                    select {
-                        class: "rounded border border-white/15 bg-transparent px-2 py-1.5 text-sm",
-                        onchange: move |e| status.set(e.value()),
-                        for s in POST_STATUSES {
-                            option { value: "{s}", selected: status() == s, "{s}" }
-                        }
+                    Select::<String> {
+                        default_value: Some(status()),
+                        on_value_change: move |v: Option<String>| { if let Some(v) = v { status.set(v); } },
+                        {POST_STATUSES.iter().enumerate().map(|(i, s)| rsx! {
+                            SelectOption::<String> { key: "{s}", index: i, value: s.to_string(), "{s}" }
+                        })}
                     }
                 }
                 if let Some(Ok(list)) = &*tags.read() {
@@ -353,7 +358,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                         "⤢ Full screen"
                     }
                 }
-                {render_textarea("h-80 w-full rounded border border-white/15 bg-transparent px-3 py-2 font-mono text-sm")}
+                {render_textarea("h-80 w-full font-mono text-sm")}
                 div { class: "flex items-center gap-3",
                     Button {
                         variant: ButtonVariant::Primary,
@@ -388,7 +393,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                     }
                 }
                 div { class: "grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-2",
-                    {render_textarea("h-full w-full resize-none border-r border-white/10 bg-transparent p-4 font-mono text-sm focus:outline-none")}
+                    {render_textarea("h-full w-full resize-none border-r border-white/10 font-mono text-sm")}
                     div { class: "prose max-w-none overflow-y-auto p-4",
                         {render_preview()}
                     }

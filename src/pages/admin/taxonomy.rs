@@ -5,6 +5,7 @@
 use dioxus::prelude::*;
 
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::input::Input;
 use crate::server::admin::{
     create_category, create_tag, delete_category, delete_tag, rename_category, rename_tag,
 };
@@ -98,12 +99,12 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
         section {
             h2 { class: "mb-3 text-lg font-semibold", "{kind.title()}" }
             div { class: "mb-3 flex gap-2",
-                input {
-                    class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                Input {
+                    class: "flex-1",
                     placeholder: "{kind.placeholder()}",
                     value: "{new_name}",
-                    oninput: move |e| new_name.set(e.value()),
-                    onkeydown: move |e| if e.key() == Key::Enter { add(()) },
+                    oninput: move |e: FormEvent| new_name.set(e.value()),
+                    onkeydown: move |e: KeyboardEvent| if e.key() == Key::Enter { add(()) },
                 }
                 Button { variant: ButtonVariant::Primary, size: ButtonSize::Sm, onclick: move |_| add(()), "Add" }
             }
@@ -151,11 +152,11 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                                     rsx! {
                                         li { key: "{id}", class: "flex items-center justify-between gap-2",
                                             if edit_id() == Some(id) {
-                                                input {
-                                                    class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                                                Input {
+                                                    class: "flex-1",
                                                     value: "{edit_name}",
-                                                    oninput: move |e| edit_name.set(e.value()),
-                                                    onkeydown: move |e| if e.key() == Key::Enter { save(()) },
+                                                    oninput: move |e: FormEvent| edit_name.set(e.value()),
+                                                    onkeydown: move |e: KeyboardEvent| if e.key() == Key::Enter { save(()) },
                                                 }
                                                 Button { variant: ButtonVariant::Link, size: ButtonSize::Xs, onclick: move |_| save(()), "Save" }
                                                 Button { variant: ButtonVariant::Ghost, size: ButtonSize::Xs, onclick: move |_| edit_id.set(None), "Cancel" }

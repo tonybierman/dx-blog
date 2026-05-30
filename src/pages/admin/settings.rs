@@ -4,6 +4,7 @@
 use dioxus::prelude::*;
 
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::input::Input;
 use crate::server::settings::{get_site_tagline, get_site_title, set_site_tagline, set_site_title};
 
 use super::AdminShell;
@@ -63,21 +64,21 @@ pub fn AdminSettings() -> Element {
             section { class: "max-w-xl space-y-4",
                 div {
                     label { class: "mb-1 block text-sm font-medium", "Site title" }
-                    input {
-                        class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
+                    Input {
+                        class: "w-full",
                         placeholder: "dx-blog",
                         value: "{title_draft}",
-                        oninput: move |e| { title_draft.set(e.value()); saved.set(false); err.set(String::new()); },
+                        oninput: move |e: FormEvent| { title_draft.set(e.value()); saved.set(false); err.set(String::new()); },
                     }
                     p { class: "mt-1 text-xs text-white/40", "Shown as the brand in the header and footer." }
                 }
                 div {
                     label { class: "mb-1 block text-sm font-medium", "Site tagline" }
-                    input {
-                        class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
+                    Input {
+                        class: "w-full",
                         placeholder: "A short subtitle for your site",
                         value: "{tagline_draft}",
-                        oninput: move |e| { tagline_draft.set(e.value()); saved.set(false); err.set(String::new()); },
+                        oninput: move |e: FormEvent| { tagline_draft.set(e.value()); saved.set(false); err.set(String::new()); },
                     }
                     p { class: "mt-1 text-xs text-white/40", "Shown beside the title in the header." }
                 }

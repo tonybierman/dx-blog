@@ -4,3 +4,5 @@ pub mod button;
 pub mod dropdown_menu;
 pub mod input;
 pub mod navbar;
+pub mod select;
+pub mod textarea;

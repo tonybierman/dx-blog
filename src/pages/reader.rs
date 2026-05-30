@@ -8,6 +8,7 @@ use arium_dioxus::ResourceRole;
 use dioxus_sdk_time::use_interval;
 
 use crate::components::avatar::{Avatar, AvatarFallback, AvatarImage, AvatarImageSize};
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::dropdown_menu::{
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 };
@@ -305,8 +306,9 @@ fn ReactionBar(post_id: i64, live: LiveHandle) -> Element {
 
     rsx! {
         div { class: "relative mt-10 flex items-center gap-3",
-            button {
-                class: "inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-1.5 text-sm hover:bg-white/5 active:scale-95",
+            Button {
+                variant: ButtonVariant::Outline,
+                size: ButtonSize::Sm,
                 onclick: clap,
                 span { "👏" }
                 "Clap"
@@ -497,8 +499,9 @@ fn CommentSection(post_id: i64, live: LiveHandle) -> Element {
                     value: "{body}",
                     oninput: move |e| body.set(e.value()),
                 }
-                button {
-                    class: "rounded bg-brand-600 px-4 py-1.5 text-sm font-medium hover:bg-brand-500 disabled:opacity-50",
+                Button {
+                    variant: ButtonVariant::Primary,
+                    size: ButtonSize::Sm,
                     disabled: submitting(),
                     onclick: submit,
                     if submitting() { "Posting…" } else { "Post comment" }
@@ -801,8 +804,9 @@ pub fn SearchResults(q: String) -> Element {
                         on_select: move |v: String| { date_range.set(v); page.set(1); },
                     }
                     if !category().is_empty() || !tag().is_empty() || !date_range().is_empty() {
-                        button {
-                            class: "text-xs text-brand-400 hover:underline",
+                        Button {
+                            variant: ButtonVariant::Link,
+                            size: ButtonSize::Xs,
                             onclick: move |_| { category.set(String::new()); tag.set(String::new()); date_range.set(String::new()); page.set(1); },
                             "Clear filters"
                         }
@@ -857,8 +861,8 @@ pub fn Subscribe() -> Element {
                         value: "{email}",
                         oninput: move |e| email.set(e.value()),
                     }
-                    button {
-                        class: "rounded bg-brand-600 px-4 py-2 font-medium hover:bg-brand-500",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         onclick: submit,
                         "Subscribe"
                     }

@@ -18,6 +18,8 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use dioxus_sdk_time::use_interval;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
+
 /// String prop bag parsed from an embed block.
 type Props = BTreeMap<String, String>;
 
@@ -93,8 +95,9 @@ fn CounterDemo(start: i64, step: i64, label: String) -> Element {
 
     rsx! {
         div { class: "flex items-center gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-4",
-            button {
-                class: "h-9 w-9 rounded-lg border border-white/15 text-lg leading-none hover:bg-white/5",
+            Button {
+                variant: ButtonVariant::Outline,
+                size: ButtonSize::Icon,
                 onclick: move |_| count -= step,
                 "−"
             }
@@ -102,8 +105,9 @@ fn CounterDemo(start: i64, step: i64, label: String) -> Element {
                 div { class: "text-2xl font-bold tabular-nums", "{count}" }
                 div { class: "text-xs uppercase tracking-wide text-white/40", "{label}" }
             }
-            button {
-                class: "h-9 w-9 rounded-lg border border-white/15 text-lg leading-none hover:bg-white/5",
+            Button {
+                variant: ButtonVariant::Outline,
+                size: ButtonSize::Icon,
                 onclick: move |_| count += step,
                 "+"
             }

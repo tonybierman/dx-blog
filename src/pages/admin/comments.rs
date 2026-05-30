@@ -2,6 +2,7 @@
 
 use dioxus::prelude::*;
 
+use crate::components::button::ButtonVariant;
 use crate::live::use_admin_live;
 use crate::pages::widgets::list_states;
 use crate::server::admin::{admin_list_comments, delete_comment, moderate_comment};
@@ -47,7 +48,7 @@ pub fn AdminComments() -> Element {
                                                 }
                                                 ActionButton {
                                                     label: "Delete".to_string(),
-                                                    class: "text-red-400 hover:underline".to_string(),
+                                                    variant: ButtonVariant::Destructive,
                                                     on_done: move |_| comments.restart(),
                                                     action: move |_| Box::pin(async move { delete_comment(cid).await }) as ActionFuture,
                                                 }

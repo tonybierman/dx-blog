@@ -4,6 +4,7 @@
 
 use dioxus::prelude::*;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::server::admin::{
     create_category, create_tag, delete_category, delete_tag, rename_category, rename_tag,
 };
@@ -104,7 +105,7 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                     oninput: move |e| new_name.set(e.value()),
                     onkeydown: move |e| if e.key() == Key::Enter { add(()) },
                 }
-                button { class: "rounded bg-brand-600 px-3 text-sm", onclick: move |_| add(()), "Add" }
+                Button { variant: ButtonVariant::Primary, size: ButtonSize::Sm, onclick: move |_| add(()), "Add" }
             }
             if !err().is_empty() {
                 p { class: "mb-2 text-xs text-red-400", "{err}" }
@@ -156,17 +157,18 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                                                     oninput: move |e| edit_name.set(e.value()),
                                                     onkeydown: move |e| if e.key() == Key::Enter { save(()) },
                                                 }
-                                                button { class: "text-xs text-brand-400 hover:underline", onclick: move |_| save(()), "Save" }
-                                                button { class: "text-xs text-white/50 hover:underline", onclick: move |_| edit_id.set(None), "Cancel" }
+                                                Button { variant: ButtonVariant::Link, size: ButtonSize::Xs, onclick: move |_| save(()), "Save" }
+                                                Button { variant: ButtonVariant::Ghost, size: ButtonSize::Xs, onclick: move |_| edit_id.set(None), "Cancel" }
                                             } else {
                                                 span { "{display}" }
                                                 div { class: "flex gap-2",
-                                                    button {
-                                                        class: "text-xs text-white/60 hover:underline",
+                                                    Button {
+                                                        variant: ButtonVariant::Ghost,
+                                                        size: ButtonSize::Xs,
                                                         onclick: move |_| { edit_name.set(display.clone()); edit_id.set(Some(id)); },
                                                         "Edit"
                                                     }
-                                                    button { class: "text-xs text-red-400 hover:underline", onclick: del, "Delete" }
+                                                    Button { variant: ButtonVariant::Destructive, size: ButtonSize::Xs, onclick: del, "Delete" }
                                                 }
                                             }
                                         }

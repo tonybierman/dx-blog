@@ -3,6 +3,7 @@
 
 use dioxus::prelude::*;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::server::settings::{get_site_tagline, get_site_title, set_site_tagline, set_site_title};
 
 use super::AdminShell;
@@ -81,8 +82,9 @@ pub fn AdminSettings() -> Element {
                     p { class: "mt-1 text-xs text-white/40", "Shown beside the title in the header." }
                 }
                 div { class: "flex items-center gap-3",
-                    button {
-                        class: "rounded bg-brand-600 px-4 py-2 text-sm font-medium hover:bg-brand-500",
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        size: ButtonSize::Sm,
                         onclick: save,
                         "Save"
                     }

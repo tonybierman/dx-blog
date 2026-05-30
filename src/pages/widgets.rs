@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 
 use arium_dioxus::ui::components::skeleton::Skeleton;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::model::{PostCard, PostFeed};
 use crate::server::comments::recent_comments;
 use crate::server::posts::featured_posts;
@@ -327,15 +328,17 @@ pub fn PaginationBar(page: i64, total_pages: i64, on_change: EventHandler<i64>) 
     }
     rsx! {
         nav { class: "mt-8 flex items-center justify-center gap-4",
-            button {
-                class: "rounded border border-white/15 px-3 py-1 text-sm disabled:opacity-40",
+            Button {
+                variant: ButtonVariant::Outline,
+                size: ButtonSize::Sm,
                 disabled: page <= 1,
                 onclick: move |_| on_change.call(page - 1),
                 "← Prev"
             }
             span { class: "text-sm text-white/60", "Page {page} of {total_pages}" }
-            button {
-                class: "rounded border border-white/15 px-3 py-1 text-sm disabled:opacity-40",
+            Button {
+                variant: ButtonVariant::Outline,
+                size: ButtonSize::Sm,
                 disabled: page >= total_pages,
                 onclick: move |_| on_change.call(page + 1),
                 "Next →"

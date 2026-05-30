@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 use dioxus_sdk_time::use_debounce;
 use std::time::Duration;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::model::{PostEditData, POST_STATUSES, STATUS_DRAFT};
 use crate::pages::widgets::list_states;
 use crate::server::admin::{
@@ -71,15 +72,15 @@ pub fn AdminPostList() -> Element {
                             thead { class: "border-b border-white/10 text-white/50",
                                 tr {
                                     th { class: "py-2",
-                                        button { class: "font-medium hover:text-white",
+                                        Button { variant: ButtonVariant::Ghost, size: ButtonSize::Xs,
                                             onclick: move |_| toggle_sort("title", "title_desc"), "Title" }
                                     }
                                     th {
-                                        button { class: "font-medium hover:text-white",
+                                        Button { variant: ButtonVariant::Ghost, size: ButtonSize::Xs,
                                             onclick: move |_| toggle_sort("status", "status_desc"), "Status" }
                                     }
                                     th {
-                                        button { class: "font-medium hover:text-white",
+                                        Button { variant: ButtonVariant::Ghost, size: ButtonSize::Xs,
                                             onclick: move |_| toggle_sort("published", "published_desc"), "Published" }
                                     }
                                     th { "" }
@@ -98,7 +99,7 @@ pub fn AdminPostList() -> Element {
                                                 rsx! {
                                                     ActionButton {
                                                         label: "Delete".to_string(),
-                                                        class: "text-red-400 hover:underline".to_string(),
+                                                        variant: ButtonVariant::Destructive,
                                                         on_done: move |_| posts.restart(),
                                                         action: move |_| Box::pin(async move { delete_post(pid).await }) as ActionFuture,
                                                     }
@@ -263,9 +264,11 @@ fn EditorForm(initial: PostEditData) -> Element {
                                 debounce_featured.action(v);
                             },
                         }
-                        button {
+                        Button {
                             r#type: "button",
-                            class: "shrink-0 rounded border border-white/15 px-3 text-sm hover:bg-white/5",
+                            variant: ButtonVariant::Outline,
+                            size: ButtonSize::Sm,
+                            class: "shrink-0",
                             onclick: move |_| show_media_picker.set(!show_media_picker()),
                             if show_media_picker() { "Close" } else { "Library" }
                         }
@@ -342,17 +345,19 @@ fn EditorForm(initial: PostEditData) -> Element {
                 }
                 div { class: "flex items-center justify-between",
                     label { class: "text-sm uppercase tracking-wide text-white/40", "Markdown" }
-                    button {
+                    Button {
                         r#type: "button",
-                        class: "rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/5",
+                        variant: ButtonVariant::Outline,
+                        size: ButtonSize::Xs,
                         onclick: move |_| fullscreen.set(true),
                         "⤢ Full screen"
                     }
                 }
                 {render_textarea("h-80 w-full rounded border border-white/15 bg-transparent px-3 py-2 font-mono text-sm")}
                 div { class: "flex items-center gap-3",
-                    button {
-                        class: "rounded bg-brand-600 px-4 py-2 text-sm font-medium hover:bg-brand-500",
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        size: ButtonSize::Sm,
                         onclick: submit,
                         if editing { "Save changes" } else { "Create post" }
                     }
@@ -374,9 +379,10 @@ fn EditorForm(initial: PostEditData) -> Element {
             div { class: "fixed inset-0 z-50 flex flex-col bg-[#0f1116]",
                 div { class: "flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-2",
                     span { class: "text-sm text-white/60", if editing { "Edit post" } else { "New post" } }
-                    button {
+                    Button {
                         r#type: "button",
-                        class: "rounded border border-white/15 px-3 py-1 text-sm text-white/70 hover:bg-white/5",
+                        variant: ButtonVariant::Outline,
+                        size: ButtonSize::Sm,
                         onclick: move |_| fullscreen.set(false),
                         "Exit full screen (Esc)"
                     }

@@ -11,6 +11,7 @@ use dioxus::prelude::*;
 use arium_dioxus::server::logout;
 use arium_dioxus::ui::use_permissions;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::navbar::{Navbar, NavbarContent, NavbarItem, NavbarNav, NavbarTrigger};
 use crate::model::SiteMeta;
 use crate::server::settings::DEFAULT_SITE_TITLE;
@@ -249,8 +250,9 @@ pub fn DrawerLayout(nav: Element, children: Element) -> Element {
         div { class: "relative flex min-h-screen flex-col",
             SiteHeader {}
             div { class: "flex items-center gap-3 border-b border-white/10 px-4 py-2",
-                button {
-                    class: "rounded border border-white/15 px-2 py-1 text-lg leading-none hover:bg-white/5",
+                Button {
+                    variant: ButtonVariant::Outline,
+                    size: ButtonSize::Icon,
                     onclick: move |_| open.set(!open()),
                     "\u{2630}"
                 }
@@ -287,8 +289,9 @@ pub fn MegaMenuLayout(panel: Element, children: Element) -> Element {
             header { class: "relative border-b border-white/10",
                 nav { class: "mx-auto flex max-w-6xl items-center gap-6 px-4 py-3",
                     span { class: "font-semibold", "Explore" }
-                    button {
-                        class: "text-sm text-white/70 hover:text-white",
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
                         onclick: move |_| open.set(!open()),
                         "Browse ▾"
                     }

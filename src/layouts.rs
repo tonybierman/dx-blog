@@ -11,7 +11,6 @@ use dioxus::prelude::*;
 use arium_dioxus::server::logout;
 use arium_dioxus::ui::use_permissions;
 
-use crate::auth_tokens::ADMIN_NAV_TOKENS;
 use crate::model::SiteMeta;
 use crate::server::settings::DEFAULT_SITE_TITLE;
 use crate::Route;
@@ -28,7 +27,11 @@ pub type SiteChrome = Resource<Result<SiteMeta>>;
 pub fn SiteHeader() -> Element {
     let perms = use_permissions();
     let authed = perms.is_authenticated();
-    let can_admin = authed && ADMIN_NAV_TOKENS.iter().copied().any(|t| perms.has(t));
+    // Send "Admin" to the first section this user can actually open, so editors
+    // (no analytics access) aren't dropped on the Dashboard's permission error.
+    let admin_route = authed
+        .then(|| crate::pages::admin::admin_landing(|t| perms.has(t)))
+        .flatten();
     let name = perms
         .profile()
         .map(|p| p.display().to_string())
@@ -63,8 +66,8 @@ pub fn SiteHeader() -> Element {
                     Link { to: Route::Archive, class: "hover:underline", "Archive" }
                     Link { to: Route::SearchResults { q: String::new() }, class: "hover:underline", "Search" }
                     if authed {
-                        if can_admin {
-                            Link { to: Route::AdminDashboard, class: "hover:underline", "Admin" }
+                        if let Some(route) = admin_route.clone() {
+                            Link { to: route, class: "hover:underline", "Admin" }
                         }
                         Link { to: Route::AccountPage, class: "hover:underline", "{name}" }
                         button {

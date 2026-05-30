@@ -3,10 +3,26 @@
 
 use dioxus::prelude::*;
 
+use arium_dioxus::ui::{use_permissions, UsePermissions};
+
+use crate::auth_tokens::ANALYTICS_READ;
 use crate::model::AnalyticsSummary;
 use crate::server::analytics::{analytics_summary, top_posts, top_referrers, views_over_time};
+use crate::Route;
 
-use super::AdminShell;
+use super::{admin_landing, AdminShell};
+
+/// These pages are backed by analytics server fns. A user without
+/// `ANALYTICS_READ` (their nav links are already hidden) can still reach them by
+/// direct URL — e.g. landing on `/admin`. Bounce them to their first accessible
+/// section instead of rendering the raw "permission" error. Returns `None`
+/// while permissions load, when the user holds the token, or when they have no
+/// admin section at all (the shell's route guard then sends them to login).
+fn analytics_redirect(perms: &UsePermissions) -> Option<Route> {
+    (!perms.is_loading() && !perms.has(ANALYTICS_READ))
+        .then(|| admin_landing(|t| perms.has(t)))
+        .flatten()
+}
 
 #[component]
 fn MetricTiles(summary: AnalyticsSummary) -> Element {
@@ -35,7 +51,12 @@ fn MetricTiles(summary: AnalyticsSummary) -> Element {
 
 #[component]
 pub fn AdminDashboard() -> Element {
+    let perms = use_permissions();
     let summary = use_resource(analytics_summary);
+    if let Some(route) = analytics_redirect(&perms) {
+        navigator().replace(route);
+        return rsx! {};
+    }
     rsx! {
         AdminShell { active: "dashboard".to_string(),
             h1 { class: "mb-6 text-2xl font-bold", "Dashboard" }
@@ -50,10 +71,15 @@ pub fn AdminDashboard() -> Element {
 
 #[component]
 pub fn AdminAnalytics() -> Element {
+    let perms = use_permissions();
     let summary = use_resource(analytics_summary);
     let top = use_resource(top_posts);
     let referrers = use_resource(top_referrers);
     let series = use_resource(views_over_time);
+    if let Some(route) = analytics_redirect(&perms) {
+        navigator().replace(route);
+        return rsx! {};
+    }
     rsx! {
         AdminShell { active: "analytics".to_string(),
             h1 { class: "mb-6 text-2xl font-bold", "Analytics" }

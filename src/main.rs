@@ -17,6 +17,8 @@ use arium_dioxus::ui::components::label::Label;
 use arium_dioxus::ui::{OAuthProvidersProvider, PermissionsProvider};
 
 mod auth_tokens;
+#[cfg(feature = "server")]
+mod db;
 mod embeds;
 mod layouts;
 mod live;

@@ -6,7 +6,8 @@
 //! cargo test --no-default-features --features server,sqlite
 //! ```
 
-use crate::server::{render_markdown, unique_slug};
+use crate::db::unique_slug;
+use crate::server::render_markdown;
 use arium_dioxus::pool::Pool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::str::FromStr;

@@ -5,6 +5,12 @@ use dioxus::prelude::*;
 use crate::model::{CommentView, RecentComment};
 
 #[cfg(feature = "server")]
+use crate::db::comments::{
+    burst_count_db, commenter_cooldown_email_db, commenter_cooldown_uid_db, fetch_comment_by_id_db,
+    has_prior_approved_comment_db, insert_comment_db, list_comments_db, post_is_published_db,
+    recent_comments_db,
+};
+#[cfg(feature = "server")]
 use crate::server::{live::HubExtension, looks_like_email, sfe, DbExtension};
 
 /// Upper bounds on guest-supplied comment fields. The body is generous (a long
@@ -31,56 +37,18 @@ const POST_BURST_WINDOW: &str = "-60 seconds";
 #[cfg(feature = "server")]
 const POST_BURST_MAX: i64 = 10;
 
-/// The `CommentView` projection + its author join, shared by the public
-/// per-post list here and the admin moderation queue in `server::admin`. Each
-/// caller appends its own `WHERE`/`ORDER BY`. Centralized so the COALESCE
-/// display-name fallback stays identical everywhere a `CommentView` is read.
-#[cfg(feature = "server")]
-pub(crate) const COMMENT_VIEW_COLUMNS: &str = "cm.id, cm.post_id, \
-     COALESCE(u.display_name, u.username, cm.guest_name, 'Anonymous') AS display_name, \
-     cm.body, cm.status, cm.created_at";
-#[cfg(feature = "server")]
-pub(crate) const COMMENT_VIEW_FROM: &str =
-    "FROM comments cm LEFT JOIN users u ON u.id = cm.author_id";
-
 /// The most recent approved comments across all published posts — backs the
 /// home "Recent comments" sidebar. Public.
 #[post("/api/comments/recent", db: DbExtension)]
 pub async fn recent_comments(limit: i64) -> Result<Vec<RecentComment>> {
     let limit = limit.clamp(1, 10);
-    let rows = sqlx::query_as::<_, RecentComment>(
-        r#"
-        SELECT cm.id, p.title AS post_title, p.slug AS post_slug,
-               COALESCE(u.display_name, u.username, cm.guest_name, 'Anonymous') AS display_name,
-               cm.body, cm.created_at
-        FROM comments cm
-        JOIN posts p ON p.id = cm.post_id AND p.status = 'published'
-        LEFT JOIN users u ON u.id = cm.author_id
-        WHERE cm.status = 'approved'
-        ORDER BY cm.created_at DESC
-        LIMIT ?
-        "#,
-    )
-    .bind(limit)
-    .fetch_all(&db.0)
-    .await
-    .map_err(sfe)?;
-    Ok(rows)
+    Ok(recent_comments_db(&db.0, limit).await.map_err(sfe)?)
 }
 
 /// Approved comments for a post, oldest first (public view).
 #[post("/api/comments", db: DbExtension)]
 pub async fn list_comments(post_id: i64) -> Result<Vec<CommentView>> {
-    let rows = sqlx::query_as::<_, CommentView>(&format!(
-        "SELECT {COMMENT_VIEW_COLUMNS} {COMMENT_VIEW_FROM} \
-         WHERE cm.post_id = ? AND cm.status = 'approved' \
-         ORDER BY cm.created_at ASC"
-    ))
-    .bind(post_id)
-    .fetch_all(&db.0)
-    .await
-    .map_err(sfe)?;
-    Ok(rows)
+    Ok(list_comments_db(&db.0, post_id).await.map_err(sfe)?)
 }
 
 /// Post a comment. Logged-in users are attributed; guests must give name+email.
@@ -109,14 +77,7 @@ pub async fn create_comment(
     // Only accept comments on a post that actually exists and is published —
     // otherwise anyone could POST arbitrary `post_id`s (including drafts or
     // non-existent ids) and pile up rows attached to nothing visible.
-    let post_ok: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM posts WHERE id = ? AND status = 'published')",
-    )
-    .bind(post_id)
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
-    if !post_ok {
+    if !post_is_published_db(&db.0, post_id).await.map_err(sfe)? {
         return Err(ServerFnError::new("Post not found.").into());
     }
 
@@ -137,8 +98,6 @@ pub async fn create_comment(
             if name.chars().count() > MAX_NAME_LEN || email.len() > MAX_EMAIL_LEN {
                 return Err(ServerFnError::new("Name or email is too long.").into());
             }
-            // Same sanity check the subscribe flow uses — reject the obvious junk
-            // the old non-empty-only guard let through.
             if !looks_like_email(&email) {
                 return Err(ServerFnError::new("Please enter a valid email address.").into());
             }
@@ -150,43 +109,26 @@ pub async fn create_comment(
     // (main.rs) is the outer guard; these two gates are per-post so they survive
     // behind a shared proxy IP: a short cooldown per commenter identity, plus a
     // burst cap on how fast one post can accrue comments from any identities.
-    let recent_by_identity: Option<i64> = match (author_id, gemail.as_deref()) {
-        (Some(uid), _) => sqlx::query_scalar(
-            "SELECT 1 FROM comments WHERE post_id = ? AND author_id = ? \
-             AND created_at >= datetime('now', ?) LIMIT 1",
-        )
-        .bind(post_id)
-        .bind(uid)
-        .bind(COMMENT_COOLDOWN)
-        .fetch_optional(&db.0)
-        .await
-        .map_err(sfe)?,
-        (None, Some(email)) => sqlx::query_scalar(
-            "SELECT 1 FROM comments WHERE post_id = ? AND guest_email = ? \
-             AND created_at >= datetime('now', ?) LIMIT 1",
-        )
-        .bind(post_id)
-        .bind(email)
-        .bind(COMMENT_COOLDOWN)
-        .fetch_optional(&db.0)
-        .await
-        .map_err(sfe)?,
-        _ => None,
+    let throttled = match (author_id, gemail.as_deref()) {
+        (Some(uid), _) => commenter_cooldown_uid_db(&db.0, post_id, uid, COMMENT_COOLDOWN)
+            .await
+            .map_err(sfe)?
+            .is_some(),
+        (None, Some(email)) => commenter_cooldown_email_db(&db.0, post_id, email, COMMENT_COOLDOWN)
+            .await
+            .map_err(sfe)?
+            .is_some(),
+        _ => false,
     };
-    if recent_by_identity.is_some() {
+    if throttled {
         return Err(
             ServerFnError::new("You're commenting too quickly — please wait a moment.").into(),
         );
     }
 
-    let burst: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM comments WHERE post_id = ? AND created_at >= datetime('now', ?)",
-    )
-    .bind(post_id)
-    .bind(POST_BURST_WINDOW)
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
+    let burst = burst_count_db(&db.0, post_id, POST_BURST_WINDOW)
+        .await
+        .map_err(sfe)?;
     if burst >= POST_BURST_MAX {
         return Err(ServerFnError::new(
             "This post is receiving too many comments right now — please try again shortly.",
@@ -196,14 +138,10 @@ pub async fn create_comment(
 
     // Auto-approve a returning logged-in commenter.
     let status = if let Some(uid) = author_id {
-        let prior: Option<i64> = sqlx::query_scalar(
-            "SELECT id FROM comments WHERE author_id = ? AND status = 'approved' LIMIT 1",
-        )
-        .bind(uid)
-        .fetch_optional(&db.0)
-        .await
-        .map_err(sfe)?;
-        if prior.is_some() {
+        if has_prior_approved_comment_db(&db.0, uid)
+            .await
+            .map_err(sfe)?
+        {
             "approved"
         } else {
             "pending"
@@ -212,30 +150,22 @@ pub async fn create_comment(
         "pending"
     };
 
-    let inserted = sqlx::query(
-        "INSERT INTO comments (post_id, author_id, guest_name, guest_email, body, status)
-         VALUES (?, ?, ?, ?, ?, ?)",
+    let row_id = insert_comment_db(
+        &db.0,
+        post_id,
+        author_id,
+        gname.as_deref(),
+        gemail.as_deref(),
+        &body,
+        status,
     )
-    .bind(post_id)
-    .bind(author_id)
-    .bind(&gname)
-    .bind(&gemail)
-    .bind(&body)
-    .bind(status)
-    .execute(&db.0)
     .await
     .map_err(sfe)?;
 
     // Re-select the row through the shared projection so `display_name` and
     // `created_at` resolve exactly as `list_comments` would — the optimistic
     // client reconciles against this, so it must match what other readers see.
-    let view = sqlx::query_as::<_, CommentView>(&format!(
-        "SELECT {COMMENT_VIEW_COLUMNS} {COMMENT_VIEW_FROM} WHERE cm.id = ?"
-    ))
-    .bind(inserted.last_insert_rowid())
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
+    let view = fetch_comment_by_id_db(&db.0, row_id).await.map_err(sfe)?;
 
     // Only approved comments are public, so only they go out live.
     if view.status == "approved" {

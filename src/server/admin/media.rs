@@ -7,18 +7,17 @@ use crate::model::MediaItem;
 #[cfg(feature = "server")]
 use crate::auth_tokens::{MEDIA_UPLOAD, POSTS_WRITE_ANY};
 #[cfg(feature = "server")]
+use crate::db::media::{
+    delete_media_db, get_media_created_at_db, get_media_row_db, insert_media_stub_db,
+    list_media_db, update_media_url_db,
+};
+#[cfg(feature = "server")]
 use crate::server::{require_perm, sfe, DbExtension};
 
 #[get("/api/admin/media", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn list_media() -> Result<Vec<MediaItem>> {
     require_perm(&auth, MEDIA_UPLOAD)?;
-    let rows = sqlx::query_as::<_, MediaItem>(
-        "SELECT id, filename, url, uploaded_by, created_at FROM media ORDER BY created_at DESC",
-    )
-    .fetch_all(&db.0)
-    .await
-    .map_err(sfe)?;
-    Ok(rows)
+    Ok(list_media_db(&db.0).await.map_err(sfe)?)
 }
 
 /// Upload an image (base64-encoded). Stored under ./uploads and served at /uploads.
@@ -69,33 +68,16 @@ pub async fn upload_media(filename: String, data_base64: String) -> Result<Media
         })
         .collect();
 
-    // Reserve a row to get a unique id, then write the file and fill in the url.
-    let id: i64 = sqlx::query_scalar(
-        "INSERT INTO media (filename, url, uploaded_by) VALUES (?, '', ?) RETURNING id",
-    )
-    .bind(&safe)
-    .bind(uid)
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
+    let id = insert_media_stub_db(&db.0, &safe, uid).await.map_err(sfe)?;
 
     let stored = format!("{id}_{safe}");
     let url = format!("/uploads/{stored}");
     std::fs::create_dir_all("uploads").map_err(sfe)?;
     std::fs::write(format!("uploads/{stored}"), &bytes).map_err(sfe)?;
 
-    sqlx::query("UPDATE media SET url = ? WHERE id = ?")
-        .bind(&url)
-        .bind(id)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
+    update_media_url_db(&db.0, id, &url).await.map_err(sfe)?;
 
-    let created_at: String = sqlx::query_scalar("SELECT created_at FROM media WHERE id = ?")
-        .bind(id)
-        .fetch_one(&db.0)
-        .await
-        .map_err(sfe)?;
+    let created_at = get_media_created_at_db(&db.0, id).await.map_err(sfe)?;
 
     Ok(MediaItem {
         id,
@@ -114,12 +96,7 @@ pub async fn delete_media(id: i64) -> Result<()> {
     // dropping the row, the owner to enforce that an author may only delete their
     // own uploads. The MEDIA_UPLOAD token alone would otherwise let any author
     // delete anyone's media (IDOR within the role); a global admin overrides.
-    let row: Option<(String, i64)> =
-        sqlx::query_as("SELECT url, uploaded_by FROM media WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&db.0)
-            .await
-            .map_err(sfe)?;
+    let row = get_media_row_db(&db.0, id).await.map_err(sfe)?;
     let Some((url, uploaded_by)) = row else {
         return Ok(()); // already gone — nothing to do
     };
@@ -131,18 +108,11 @@ pub async fn delete_media(id: i64) -> Result<()> {
     if uploaded_by != uid && !is_admin {
         return Err(ServerFnError::new("You can only delete media you uploaded.").into());
     }
-    let url = Some(url);
 
-    sqlx::query("DELETE FROM media WHERE id = ?")
-        .bind(id)
-        .execute(&db.0)
-        .await
-        .map_err(sfe)?;
+    delete_media_db(&db.0, id).await.map_err(sfe)?;
 
     // Best-effort: remove the file on disk so uploads don't accumulate forever.
-    // The url is `/uploads/<id>_<filename>`; map it back to the on-disk path. A
-    // failure here (already gone, permissions) must not fail the request.
-    if let Some(name) = url.as_deref().and_then(|u| u.strip_prefix("/uploads/")) {
+    if let Some(name) = url.strip_prefix("/uploads/") {
         let _ = std::fs::remove_file(format!("uploads/{name}"));
     }
     Ok(())

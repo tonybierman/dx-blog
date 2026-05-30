@@ -19,6 +19,10 @@ use axum::{
     response::IntoResponse,
 };
 
+use crate::db::feeds::{
+    feed_active_author_usernames_db, feed_atom_posts_db, feed_category_slugs_db,
+    feed_published_posts_db, feed_tag_slugs_db,
+};
 use crate::model::to_rfc3339;
 use crate::server::DbExtension;
 
@@ -54,14 +58,12 @@ pub fn site_base() -> String {
 /// site title (the same value the page chrome shows) so the feed stays in sync
 /// with the site; falls back to the `SITE_TITLE` env, then the shared default.
 async fn site_title(pool: &arium_dioxus::pool::Pool) -> String {
-    let from_db: Option<String> =
-        sqlx::query_scalar("SELECT value FROM site_settings WHERE key = 'site_title'")
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .map(|s: String| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+    let from_db = crate::db::settings::get_setting_db(pool, "site_title")
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     from_db
         .or_else(|| {
@@ -101,18 +103,7 @@ pub async fn sitemap_handler(db: DbExtension) -> Result<impl IntoResponse, Statu
         (format!("{base}/archive"), None),
     ];
 
-    // Published posts — lastmod is the most recent of updated/published/created.
-    let posts = sqlx::query_as::<_, (String, String)>(
-        r#"
-        SELECT slug, COALESCE(updated_at, published_at, created_at) AS lastmod
-        FROM posts
-        WHERE status = 'published'
-        ORDER BY lastmod DESC
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| {
+    let posts = feed_published_posts_db(pool).await.map_err(|e| {
         tracing::warn!(target: "sitemap", "posts query failed: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -120,36 +111,23 @@ pub async fn sitemap_handler(db: DbExtension) -> Result<impl IntoResponse, Statu
         urls.push((format!("{base}/post/{slug}"), Some(to_rfc3339(&lastmod))));
     }
 
-    // Category and tag index pages.
-    for (sql, prefix) in [
-        ("SELECT slug FROM categories ORDER BY slug", "category"),
-        ("SELECT slug FROM tags ORDER BY slug", "tag"),
-    ] {
-        let slugs = sqlx::query_scalar::<_, String>(sql)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                tracing::warn!(target: "sitemap", "{prefix} slugs query failed: {e}");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-        for slug in slugs {
-            urls.push((format!("{base}/{prefix}/{slug}"), None));
-        }
+    let category_slugs = feed_category_slugs_db(pool).await.map_err(|e| {
+        tracing::warn!(target: "sitemap", "category slugs query failed: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    for slug in category_slugs {
+        urls.push((format!("{base}/category/{slug}"), None));
     }
 
-    // Authors with at least one published post.
-    let authors = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT DISTINCT u.username
-        FROM users u
-        JOIN posts p ON p.author_id = u.id
-        WHERE p.status = 'published'
-        ORDER BY u.username
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| {
+    let tag_slugs = feed_tag_slugs_db(pool).await.map_err(|e| {
+        tracing::warn!(target: "sitemap", "tag slugs query failed: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    for slug in tag_slugs {
+        urls.push((format!("{base}/tag/{slug}"), None));
+    }
+
+    let authors = feed_active_author_usernames_db(pool).await.map_err(|e| {
         tracing::warn!(target: "sitemap", "authors query failed: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -179,17 +157,6 @@ pub async fn sitemap_handler(db: DbExtension) -> Result<impl IntoResponse, Statu
     ))
 }
 
-#[derive(sqlx::FromRow)]
-struct FeedRow {
-    title: String,
-    slug: String,
-    excerpt: String,
-    body_html: String,
-    published_at: Option<String>,
-    updated_at: String,
-    author_name: String,
-}
-
 /// `GET /feed.xml` — an Atom 1.0 feed of the most recent published posts, with
 /// the full rendered HTML carried in each entry's `<content>`.
 pub async fn atom_handler(db: DbExtension) -> Result<impl IntoResponse, StatusCode> {
@@ -198,22 +165,7 @@ pub async fn atom_handler(db: DbExtension) -> Result<impl IntoResponse, StatusCo
     let title = site_title(pool).await;
     let feed_url = format!("{base}/feed.xml");
 
-    let posts = sqlx::query_as::<_, FeedRow>(
-        r#"
-        SELECT p.title, p.slug, p.excerpt, p.body_html,
-               p.published_at, p.updated_at,
-               COALESCE(u.display_name, u.username) AS author_name
-        FROM posts p
-        JOIN users u ON u.id = p.author_id
-        WHERE p.status = 'published'
-        ORDER BY p.published_at DESC, p.id DESC
-        LIMIT ?
-        "#,
-    )
-    .bind(FEED_LIMIT)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| {
+    let posts = feed_atom_posts_db(pool, FEED_LIMIT).await.map_err(|e| {
         tracing::warn!(target: "feed", "posts query failed: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;

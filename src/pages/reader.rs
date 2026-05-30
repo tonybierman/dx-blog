@@ -11,6 +11,7 @@ use crate::components::avatar::{Avatar, AvatarFallback, AvatarImage, AvatarImage
 use crate::components::dropdown_menu::{
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 };
+use crate::components::input::Input;
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
 use crate::live::{use_live, LiveHandle};
 use crate::model::CommentView;
@@ -809,11 +810,11 @@ pub fn SearchResults(q: String) -> Element {
                 }
             },
             h1 { class: "mb-4 text-2xl font-bold", "Search" }
-            input {
-                class: "mb-6 w-full rounded border border-white/15 bg-transparent px-3 py-2",
+            Input {
+                class: "mb-6 w-full",
                 placeholder: "Search posts…",
                 value: "{query}",
-                oninput: move |e| { query.set(e.value()); page.set(1); },
+                oninput: move |e: FormEvent| { query.set(e.value()); page.set(1); },
             }
             if let Some(Ok(feed)) = &*results.read() {
                 p { class: "mb-4 text-sm text-white/50", "{feed.total} result(s)" }

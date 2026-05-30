@@ -332,18 +332,28 @@ fn EditorForm(initial: PostEditData) -> Element {
                 if let Some(Ok(list)) = &*tags.read() {
                     div { class: "flex flex-wrap gap-2",
                         for t in list.clone() {
-                            label { key: "{t.id}", class: "flex items-center gap-1 text-xs text-white/70",
-                                input {
-                                    r#type: "checkbox",
-                                    checked: selected_tags().contains(&t.id),
-                                    onchange: move |e| {
-                                        let mut cur = selected_tags();
-                                        if e.checked() { if !cur.contains(&t.id) { cur.push(t.id); } }
-                                        else { cur.retain(|x| *x != t.id); }
-                                        selected_tags.set(cur);
-                                    },
+                            {
+                                let tid = t.id;
+                                let active = selected_tags().contains(&tid);
+                                rsx! {
+                                    // Toggle pill: brand-filled when selected, outline when not.
+                                    Button {
+                                        key: "{t.id}",
+                                        r#type: "button",
+                                        variant: if active { ButtonVariant::Primary } else { ButtonVariant::Outline },
+                                        size: ButtonSize::Xs,
+                                        onclick: move |_| {
+                                            let mut cur = selected_tags();
+                                            if cur.contains(&tid) {
+                                                cur.retain(|x| *x != tid);
+                                            } else {
+                                                cur.push(tid);
+                                            }
+                                            selected_tags.set(cur);
+                                        },
+                                        "#{t.name}"
+                                    }
                                 }
-                                "#{t.name}"
                             }
                         }
                     }

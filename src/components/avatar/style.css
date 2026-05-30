@@ -88,10 +88,12 @@
     height: 100%;
     align-items: center;
     justify-content: center;
-    /* Theme accent (Tailwind brand token, global on :root) so an author with no
-       image gets a branded initials chip rather than a near-black square. */
-    background: var(--color-brand-500);
-    color: #fff;
+    /* Accent surface, same token pairing as a primary button (the catalog
+       accent token is brand-mapped in dx-components-theme.css), so an author
+       with no image gets a branded initials chip rather than a near-black
+       square — and it re-themes with the rest of the UI. */
+    background: var(--secondary-color-2);
+    color: var(--primary-color);
     font-size: 1.5rem;
 }
 

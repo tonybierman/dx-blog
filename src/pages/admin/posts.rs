@@ -174,6 +174,41 @@ fn EditorForm(initial: PostEditData) -> Element {
     // `use_memo` recomputes synchronously per keystroke.
     let preview = use_memo(move || crate::mdx::parse_body(&body()));
 
+    // Full-screen mode swaps the two-column form for a distraction-free overlay
+    // holding just the editor + preview. Both layouts share the same `body`
+    // signal, so the textarea and preview render through these closures rather
+    // than being duplicated — toggling never loses in-progress text.
+    let mut fullscreen = use_signal(|| false);
+    let render_textarea = move |class: &'static str| {
+        rsx! {
+            textarea {
+                class,
+                placeholder: "Write in Markdown…",
+                value: "{body}",
+                oninput: move |e| body.set(e.value()),
+                onkeydown: move |e| {
+                    if e.key() == Key::Escape && fullscreen() {
+                        fullscreen.set(false);
+                    }
+                },
+            }
+        }
+    };
+    let render_preview = move || {
+        rsx! {
+            for (i, seg) in preview().into_iter().enumerate() {
+                match seg {
+                    crate::mdx::Segment::Html(html) => rsx! {
+                        div { key: "{i}", dangerous_inner_html: "{html}" }
+                    },
+                    crate::mdx::Segment::Embed { name, props } => rsx! {
+                        crate::embeds::EmbedBlock { key: "{i}", name, props }
+                    },
+                }
+            }
+        }
+    };
+
     let post_id = initial.id;
     let submit = move |_| {
         let (t, ex, b, f) = (title(), excerpt(), body(), featured());
@@ -305,12 +340,16 @@ fn EditorForm(initial: PostEditData) -> Element {
                         }
                     }
                 }
-                textarea {
-                    class: "h-80 w-full rounded border border-white/15 bg-transparent px-3 py-2 font-mono text-sm",
-                    placeholder: "Write in Markdown…",
-                    value: "{body}",
-                    oninput: move |e| body.set(e.value()),
+                div { class: "flex items-center justify-between",
+                    label { class: "text-sm uppercase tracking-wide text-white/40", "Markdown" }
+                    button {
+                        r#type: "button",
+                        class: "rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/5",
+                        onclick: move |_| fullscreen.set(true),
+                        "⤢ Full screen"
+                    }
                 }
+                {render_textarea("h-80 w-full rounded border border-white/15 bg-transparent px-3 py-2 font-mono text-sm")}
                 div { class: "flex items-center gap-3",
                     button {
                         class: "rounded bg-brand-600 px-4 py-2 text-sm font-medium hover:bg-brand-500",
@@ -326,15 +365,26 @@ fn EditorForm(initial: PostEditData) -> Element {
             div {
                 h3 { class: "mb-2 text-sm uppercase tracking-wide text-white/40", "Preview" }
                 div { class: "prose max-w-none rounded border border-white/10 p-4",
-                    for (i, seg) in preview().into_iter().enumerate() {
-                        match seg {
-                            crate::mdx::Segment::Html(html) => rsx! {
-                                div { key: "{i}", dangerous_inner_html: "{html}" }
-                            },
-                            crate::mdx::Segment::Embed { name, props } => rsx! {
-                                crate::embeds::EmbedBlock { key: "{i}", name, props }
-                            },
-                        }
+                    {render_preview()}
+                }
+            }
+        }
+        if fullscreen() {
+            // Distraction-free overlay: editor + preview fill the viewport.
+            div { class: "fixed inset-0 z-50 flex flex-col bg-[#0f1116]",
+                div { class: "flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-2",
+                    span { class: "text-sm text-white/60", if editing { "Edit post" } else { "New post" } }
+                    button {
+                        r#type: "button",
+                        class: "rounded border border-white/15 px-3 py-1 text-sm text-white/70 hover:bg-white/5",
+                        onclick: move |_| fullscreen.set(false),
+                        "Exit full screen (Esc)"
+                    }
+                }
+                div { class: "grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-2",
+                    {render_textarea("h-full w-full resize-none border-r border-white/10 bg-transparent p-4 font-mono text-sm focus:outline-none")}
+                    div { class: "prose max-w-none overflow-y-auto p-4",
+                        {render_preview()}
                     }
                 }
             }

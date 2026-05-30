@@ -64,8 +64,8 @@ pub async fn featured_posts(limit: i64) -> Result<Vec<crate::model::PostCard>> {
 /// to callers who can edit them (Editor+ on the post, or a global admin).
 #[post("/api/post", auth: arium_dioxus::auth::Session, db: DbExtension, authority: arium_dioxus::ResourceAuthorityExt)]
 pub async fn get_post(slug: String) -> Result<Option<PostDetail>> {
-    let post = get_post_db(&db.0, &slug).await.map_err(sfe)?;
-    if let Some(ref p) = post {
+    let mut post = get_post_db(&db.0, &slug).await.map_err(sfe)?;
+    if let Some(ref mut p) = post {
         if p.status != "published"
             && crate::server::admin::can_edit_post(&auth, &db.0, &authority, p.id)
                 .await
@@ -73,6 +73,9 @@ pub async fn get_post(slug: String) -> Result<Option<PostDetail>> {
         {
             return Ok(None);
         }
+        // Render the body to highlighted segments here so the reader can display
+        // it as data, never running syntect (or the markdown pipeline) on wasm.
+        p.body_segments = crate::server::highlight::parse_body_highlighted(&p.body_md);
     }
     Ok(post)
 }

@@ -46,6 +46,9 @@ use pages::reader::{
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
+// Syntect (base16-ocean.dark) token colors for highlighted code blocks. The
+// classes (`syn-…`) are emitted server-side; see `server::highlight`.
+const HIGHLIGHT_CSS: Asset = asset!("/assets/highlight.css");
 
 /// The blog's routes. Each page component wraps its own body in the appropriate
 /// layout wrapper (HolyGrail / FullBleed / Bento / Masonry) — see `layouts`.
@@ -316,6 +319,7 @@ fn App() -> Element {
         document::Stylesheet { href: arium_dioxus::DEFAULT_THEME_CSS }
         document::Stylesheet { href: MAIN_CSS }
         document::Stylesheet { href: TAILWIND_CSS }
+        document::Stylesheet { href: HIGHLIGHT_CSS }
 
         // Runtime theme override. Loaded after the stylesheets so it wins the
         // cascade; recolors every brand-* utility site-wide.

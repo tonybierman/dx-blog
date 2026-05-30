@@ -24,8 +24,14 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 /// One piece of a parsed post body, in document order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Serialize`/`Deserialize` so the reader can render segments the server
+/// produced (with syntax-highlighted code) instead of re-running the markdown
+/// pipeline on the client — see `crate::server::highlight::parse_body_highlighted`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Segment {
     /// A run of ordinary markdown, already rendered to sanitized HTML.
     Html(String),
@@ -36,15 +42,24 @@ pub enum Segment {
     },
 }
 
-/// Split `md` into HTML runs and embed blocks. A body with no embeds yields a
-/// single `Html` segment identical to `render_markdown(md)`.
+/// Split `md` into HTML runs and embed blocks, rendering each prose run with the
+/// shared `crate::server::render_markdown` (pulldown-cmark + ammonia). A body
+/// with no embeds yields a single `Html` segment identical to `render_markdown(md)`.
 pub fn parse_body(md: &str) -> Vec<Segment> {
+    parse_body_with(md, crate::server::render_markdown)
+}
+
+/// `parse_body` with a pluggable prose renderer. The embed grammar is identical;
+/// only the function that turns each markdown run into HTML differs. The server
+/// passes a syntax-highlighting renderer here (see `server::highlight`), while
+/// `parse_body` passes the plain pipeline shared with the editor's live preview.
+pub fn parse_body_with(md: &str, render: impl Fn(&str) -> String) -> Vec<Segment> {
     let mut segments = Vec::new();
     let mut run = String::new();
 
     let flush = |run: &mut String, segments: &mut Vec<Segment>| {
         if !run.trim().is_empty() {
-            segments.push(Segment::Html(crate::server::render_markdown(run)));
+            segments.push(Segment::Html(render(run)));
         }
         run.clear();
     };

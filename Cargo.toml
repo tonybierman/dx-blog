@@ -66,6 +66,21 @@ syntect = { version = "5", default-features = false, features = ["default-fancy"
 slug = { version = "0.1", optional = true }                                 # slug generation
 base64 = { version = "0.22", optional = true }                             # media upload decode
 
+# Image rendition pipeline (server-only): on upload, decode the image, resize it
+# to the WordPress-style width set, and re-encode. `image` does the decode +
+# Lanczos resize; the `webp` crate (libwebp) does the lossy WebP encode `image`'s
+# pure-Rust encoder can't. `regex` rewrites inline `<img>`s that point at
+# `/uploads/…` into responsive `<picture>` markup at render time. AVIF is behind
+# the optional `avif` feature below (heavy build, slow encode) and off by default.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+], optional = true }
+webp = { version = "0.3", optional = true }
+regex = { version = "1", optional = true }
+
 # Live-reading SSE: in-memory broadcast hub + the axum SSE stream. `tokio`'s
 # `sync` feature gives `broadcast`; `tokio-stream`'s `sync` feature gives the
 # `BroadcastStream` adapter that turns a receiver into the `Stream` axum's `Sse`
@@ -109,11 +124,21 @@ server = [
     "dep:syntect",
     "dep:slug",
     "dep:base64",
+    "dep:image",
+    "dep:webp",
+    "dep:regex",
     "dep:tokio",
     "dep:tokio-stream",
     "dep:futures",
     "arium-dioxus/server",
 ]
+
+# Also emit AVIF renditions alongside WebP. OFF by default: the pure-Rust AVIF
+# encoder (rav1e, via `image/avif-encoder`) is slow to build and slow to run, so
+# enabling it makes every upload noticeably heavier. Turn it on deliberately with
+# `--features avif`; the `media_variants` schema already records a `format`, so no
+# migration is needed when you flip it. Requires the `server` feature too.
+avif = ["image?/avif"]
 
 # Backend selection — enable exactly one, matching arium's compile-time choice.
 # Weak `sqlx?/sqlite` forwards the driver only when `sqlx` is present (server).

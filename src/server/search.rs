@@ -7,6 +7,8 @@ use crate::model::PostFeed;
 use crate::model::{page_offset, PER_PAGE};
 
 #[cfg(feature = "server")]
+use crate::db::media::attach_card_variants;
+#[cfg(feature = "server")]
 use crate::db::posts::search_posts_db;
 #[cfg(feature = "server")]
 use crate::server::{sfe, DbExtension};
@@ -43,7 +45,7 @@ pub async fn search_posts(
         _ => None,
     };
 
-    let (items, total) = search_posts_db(
+    let (mut items, total) = search_posts_db(
         &db.0,
         &fts_query,
         PER_PAGE,
@@ -54,6 +56,7 @@ pub async fn search_posts(
     )
     .await
     .map_err(sfe)?;
+    attach_card_variants(&db.0, &mut items).await.map_err(sfe)?;
 
     Ok(PostFeed::new(items, total, page))
 }

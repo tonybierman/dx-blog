@@ -93,6 +93,26 @@ CREATE TABLE IF NOT EXISTS media (
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Resized, modern-format renditions of an uploaded image (WordPress-style:
+-- thumb/small/medium/large + a full-size re-encode), generated on upload. The
+-- original file stays the canonical `media.url`; these are the responsive
+-- `srcset` sources. `label` is the size bucket, `format` the codec (webp/avif),
+-- and (width,height) the pixel dimensions for that rendition. Rows cascade with
+-- the parent media row; the files on disk are unlinked separately on delete.
+CREATE TABLE IF NOT EXISTS media_variants (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id   INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    label      TEXT NOT NULL,
+    format     TEXT NOT NULL,
+    width      INTEGER NOT NULL,
+    height     INTEGER NOT NULL,
+    url        TEXT NOT NULL,
+    bytes      INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- Look up all renditions for a media row (build srcset; unlink files on delete).
+CREATE INDEX IF NOT EXISTS idx_media_variants_media ON media_variants(media_id);
+
 CREATE TABLE IF NOT EXISTS post_views (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     post_id      INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,

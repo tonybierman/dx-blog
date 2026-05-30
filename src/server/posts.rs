@@ -7,6 +7,8 @@ use crate::model::{page_offset, PER_PAGE};
 use crate::model::{PostDetail, PostFeed};
 
 #[cfg(feature = "server")]
+use crate::db::media::{attach_card_variants, attach_detail_variants};
+#[cfg(feature = "server")]
 use crate::db::posts::{
     featured_posts_db, get_post_db, list_archive_db, list_posts_db, posts_by_author_db,
 };
@@ -21,7 +23,7 @@ pub async fn list_posts(
     tag_slug: Option<String>,
 ) -> Result<PostFeed> {
     let (page, offset) = page_offset(page);
-    let (items, total) = list_posts_db(
+    let (mut items, total) = list_posts_db(
         &db.0,
         PER_PAGE,
         offset,
@@ -30,6 +32,7 @@ pub async fn list_posts(
     )
     .await
     .map_err(sfe)?;
+    attach_card_variants(&db.0, &mut items).await.map_err(sfe)?;
     Ok(PostFeed::new(items, total, page))
 }
 
@@ -37,9 +40,10 @@ pub async fn list_posts(
 #[post("/api/archive", db: DbExtension)]
 pub async fn list_archive(page: i64) -> Result<PostFeed> {
     let (page, offset) = page_offset(page);
-    let (items, total) = list_archive_db(&db.0, PER_PAGE, offset)
+    let (mut items, total) = list_archive_db(&db.0, PER_PAGE, offset)
         .await
         .map_err(sfe)?;
+    attach_card_variants(&db.0, &mut items).await.map_err(sfe)?;
     Ok(PostFeed::new(items, total, page))
 }
 
@@ -47,9 +51,10 @@ pub async fn list_archive(page: i64) -> Result<PostFeed> {
 #[post("/api/author-posts", db: DbExtension)]
 pub async fn posts_by_author(username: String, page: i64) -> Result<PostFeed> {
     let (page, offset) = page_offset(page);
-    let (items, total) = posts_by_author_db(&db.0, &username, PER_PAGE, offset)
+    let (mut items, total) = posts_by_author_db(&db.0, &username, PER_PAGE, offset)
         .await
         .map_err(sfe)?;
+    attach_card_variants(&db.0, &mut items).await.map_err(sfe)?;
     Ok(PostFeed::new(items, total, page))
 }
 
@@ -57,7 +62,9 @@ pub async fn posts_by_author(username: String, page: i64) -> Result<PostFeed> {
 #[post("/api/posts/featured", db: DbExtension)]
 pub async fn featured_posts(limit: i64) -> Result<Vec<crate::model::PostCard>> {
     let limit = limit.clamp(1, 10);
-    Ok(featured_posts_db(&db.0, limit).await.map_err(sfe)?)
+    let mut items = featured_posts_db(&db.0, limit).await.map_err(sfe)?;
+    attach_card_variants(&db.0, &mut items).await.map_err(sfe)?;
+    Ok(items)
 }
 
 /// A single post by slug. Published posts are public; drafts are only returned
@@ -75,7 +82,39 @@ pub async fn get_post(slug: String) -> Result<Option<PostDetail>> {
         }
         // Render the body to highlighted segments here so the reader can display
         // it as data, never running syntect (or the markdown pipeline) on wasm.
-        p.body_segments = crate::server::highlight::parse_body_highlighted(&p.body_md);
+        let mut segments = crate::server::highlight::parse_body_highlighted(&p.body_md);
+
+        // Rewrite inline `<img src="/uploads/…">` into responsive `<picture>`
+        // using the generated renditions. Collect the referenced uploads across
+        // every prose run, look their renditions up once, then swap each tag.
+        let mut srcs: Vec<String> = Vec::new();
+        for seg in &segments {
+            if let crate::mdx::Segment::Html(html) = seg {
+                for s in crate::server::images::collect_upload_img_srcs(html) {
+                    if !srcs.contains(&s) {
+                        srcs.push(s);
+                    }
+                }
+            }
+        }
+        if !srcs.is_empty() {
+            let map = crate::db::media::srcsets_for_urls(&db.0, &srcs)
+                .await
+                .map_err(sfe)?;
+            if !map.is_empty() {
+                // The reader's prose column is `max-w-3xl` (~768px).
+                const SIZES: &str = "(max-width: 768px) 100vw, 768px";
+                for seg in &mut segments {
+                    if let crate::mdx::Segment::Html(html) = seg {
+                        *html = crate::server::images::rewrite_inline_images(html, &map, SIZES);
+                    }
+                }
+            }
+        }
+        p.body_segments = segments;
+
+        // Featured-image renditions for the detail header / cards.
+        attach_detail_variants(&db.0, p).await.map_err(sfe)?;
     }
     Ok(post)
 }

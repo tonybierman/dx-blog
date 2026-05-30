@@ -203,6 +203,67 @@ pub fn RecentComments() -> Element {
     }
 }
 
+/// A featured/inline image with modern-format responsive sources.
+///
+/// When `srcset_webp` / `srcset_avif` are present (a local upload with generated
+/// renditions), it renders a `<picture>` that lets the browser pick the best
+/// format and the smallest file that fills the slot; otherwise it falls back to a
+/// plain lazy `<img>` (external URLs, or uploads not yet processed). The
+/// `<picture>` is emitted as trusted HTML — every value is escaped and the
+/// `srcset`s come from our own `/uploads/…` rendition records.
+#[component]
+pub fn ResponsiveImg(
+    src: String,
+    alt: String,
+    class: String,
+    #[props(default)] sizes: Option<String>,
+    #[props(default)] srcset_webp: Option<String>,
+    #[props(default)] srcset_avif: Option<String>,
+) -> Element {
+    if srcset_webp.is_none() && srcset_avif.is_none() {
+        return rsx! {
+            img {
+                class: "{class}",
+                src: "{src}",
+                alt: "{alt}",
+                "loading": "lazy",
+                "decoding": "async",
+            }
+        };
+    }
+
+    let sizes = sizes.unwrap_or_else(|| "100vw".to_string());
+    let esc = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('"', "&quot;")
+    };
+    let mut html = String::from("<picture>");
+    if let Some(a) = &srcset_avif {
+        html.push_str(&format!(
+            r#"<source type="image/avif" srcset="{}" sizes="{}">"#,
+            esc(a),
+            esc(&sizes)
+        ));
+    }
+    if let Some(w) = &srcset_webp {
+        html.push_str(&format!(
+            r#"<source type="image/webp" srcset="{}" sizes="{}">"#,
+            esc(w),
+            esc(&sizes)
+        ));
+    }
+    html.push_str(&format!(
+        r#"<img class="{}" src="{}" alt="{}" loading="lazy" decoding="async"></picture>"#,
+        esc(&class),
+        esc(&src),
+        esc(&alt)
+    ));
+    // `display: contents` so the wrapper doesn't disturb the surrounding flex/grid
+    // layout — the `<picture>` behaves as a direct child.
+    rsx! { div { class: "contents", dangerous_inner_html: "{html}" } }
+}
+
 /// A single post summary card linking to the detail page.
 #[component]
 pub fn PostCardView(card: PostCard, #[props(default)] fill: bool) -> Element {
@@ -211,6 +272,8 @@ pub fn PostCardView(card: PostCard, #[props(default)] fill: bool) -> Element {
         slug,
         excerpt,
         featured_image_url,
+        featured_srcset_webp,
+        featured_srcset_avif,
         author_name,
         category_name,
         published_at,
@@ -222,7 +285,14 @@ pub fn PostCardView(card: PostCard, #[props(default)] fill: bool) -> Element {
             class: "overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]",
             class: if fill { "flex h-full flex-col" },
             if let Some(img) = featured_image_url {
-                img { class: "h-40 w-full object-cover", src: "{img}", alt: "{title}" }
+                ResponsiveImg {
+                    src: img,
+                    alt: title.clone(),
+                    class: "h-40 w-full object-cover".to_string(),
+                    sizes: "(max-width: 768px) 100vw, 320px".to_string(),
+                    srcset_webp: featured_srcset_webp,
+                    srcset_avif: featured_srcset_avif,
+                }
             }
             div { class: "p-4",
                 if let Some(cat) = category_name {

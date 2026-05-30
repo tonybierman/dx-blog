@@ -4,9 +4,9 @@
 use dioxus::prelude::*;
 
 use crate::pages::widgets::list_states;
-use crate::server::admin::{delete_media, list_media, upload_media};
+use crate::server::admin::{delete_media, list_media, media_usage, upload_media};
 
-use super::{ActionButton, ActionFuture, AdminShell};
+use super::AdminShell;
 
 #[component]
 pub fn AdminMedia() -> Element {
@@ -77,14 +77,56 @@ pub fn AdminMedia() -> Element {
                                     }
                                     {
                                         let mid = m.id;
+                                        let usage = m.usage_count;
                                         rsx! {
-                                            ActionButton {
-                                                label: "✕".to_string(),
-                                                class: "text-xs text-red-400 hover:underline".to_string(),
-                                                on_done: move |_| media.restart(),
-                                                action: move |_| Box::pin(async move { delete_media(mid).await }) as ActionFuture,
+                                            button {
+                                                class: "shrink-0 text-xs text-red-400 hover:underline",
+                                                title: "Delete",
+                                                onclick: move |_| {
+                                                    spawn(async move {
+                                                        // Guard in-use images: confirm (listing the
+                                                        // posts) before deleting; unused ones delete
+                                                        // straight away.
+                                                        let proceed = if usage > 0 {
+                                                            let detail = match media_usage(mid).await {
+                                                                Ok(list) if !list.is_empty() => {
+                                                                    let lines = list
+                                                                        .iter()
+                                                                        .map(|p| format!("• {} ({})", p.title, p.kind))
+                                                                        .collect::<Vec<_>>()
+                                                                        .join("\n");
+                                                                    format!(":\n{lines}")
+                                                                }
+                                                                _ => String::new(),
+                                                            };
+                                                            let msg = format!(
+                                                                "This image is used in {usage} post(s){detail}\n\nDelete it anyway? The posts will show a broken image."
+                                                            );
+                                                            let msg_json = serde_json::to_string(&msg)
+                                                                .unwrap_or_else(|_| "\"Delete this image?\"".to_string());
+                                                            let mut eval = document::eval(&format!(
+                                                                "dioxus.send(window.confirm({msg_json}));"
+                                                            ));
+                                                            eval.recv::<bool>().await.unwrap_or(false)
+                                                        } else {
+                                                            true
+                                                        };
+                                                        if proceed && delete_media(mid).await.is_ok() {
+                                                            media.restart();
+                                                        }
+                                                    });
+                                                },
+                                                "✕"
                                             }
                                         }
+                                    }
+                                }
+                                // Usage indicator — WordPress-style "where is this used".
+                                div { class: "mt-1 text-[0.7rem]",
+                                    if m.usage_count > 0 {
+                                        span { class: "text-emerald-300/80", "Used in {m.usage_count} post(s)" }
+                                    } else {
+                                        span { class: "text-white/30", "Unused" }
                                     }
                                 }
                             }

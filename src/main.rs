@@ -186,6 +186,11 @@ fn main() {
             tracing::info!(target: "seed", "skipped (set DX_SEED=1 to seed demo data)");
         }
 
+        // Keep a pool handle for the live-data producer below: the original is
+        // about to be moved into the auth builder. Cloning a sqlx pool is cheap
+        // (it's an Arc over the shared connection set).
+        let producer_pool = pool.clone();
+
         let mailer = arium_dioxus::Mailer::from_env()?;
         tracing::info!(target: "startup", "mailer backend: {}", mailer.describe());
 
@@ -240,6 +245,59 @@ fn main() {
         // router below as an Extension, exactly like the pool install() layers.
         let hub = server::live::LiveHub::new();
 
+        // Background producer for the "Rust MDX: a live data feed" demo post:
+        // sample host CPU and memory every 2s and fan them out on the `cpu` and
+        // `mem` topics, so the embedded `livechart`s show real, server-driven
+        // data and the hub's ring buffer backfills late joiners. This is the
+        // canonical "live chart in a post" shape — in a real deployment the post
+        // and sources would come from config, and an expensive source would be
+        // gated on having readers.
+        {
+            let hub = Arc::clone(&hub);
+            let pool = producer_pool;
+            tokio::spawn(async move {
+                // Resolve the chart post by its stable slug rather than a literal
+                // id: the seed assigns ids by insertion order, so a reseed (or any
+                // schema with different content) would move the id. If the post
+                // isn't present (e.g. an unseeded DB), just don't produce.
+                let post_id: Option<i64> =
+                    sqlx::query_scalar("SELECT id FROM posts WHERE slug = 'rust-mdx-livechart'")
+                        .fetch_optional(&pool)
+                        .await
+                        .ok()
+                        .flatten();
+                let Some(post_id) = post_id else {
+                    tracing::info!(
+                        target: "live",
+                        "live-data producer idle: no `rust-mdx-livechart` post (seed with DX_SEED=1)"
+                    );
+                    return;
+                };
+
+                let mut prev_cpu: Option<(u64, u64)> = None;
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
+                loop {
+                    tick.tick().await;
+                    // Each metric is its own topic; charts subscribe to whichever
+                    // they embed. A failed/None sample just skips that tick.
+                    for (topic, sample) in [
+                        ("cpu", cpu_percent(&mut prev_cpu).await),
+                        ("mem", mem_percent().await),
+                    ] {
+                        if let Some(value) = sample {
+                            hub.publish(
+                                post_id,
+                                model::LiveEvent::Data {
+                                    topic: topic.to_string(),
+                                    value,
+                                },
+                            );
+                        }
+                    }
+                }
+            });
+        }
+
         // Serve uploaded media statically from ./uploads.
         std::fs::create_dir_all("uploads").ok();
         let router = dioxus::server::router(App)
@@ -256,6 +314,13 @@ fn main() {
             .route(
                 "/api/live/{post_id}",
                 axum::routing::get(server::live::live_handler),
+            )
+            // Site-wide admin event stream (comments + reactions) for the live
+            // dashboard / moderation queue. Same raw-GET shape, but gated on
+            // COMMENTS_MODERATE inside the handler via the session cookie.
+            .route(
+                "/api/admin/live",
+                axum::routing::get(server::live::admin_live_handler),
             );
 
         // Permanent redirects from the names people (and feed readers) commonly
@@ -288,6 +353,58 @@ fn main() {
 
         arium_dioxus::install(router, cfg).await
     });
+}
+
+/// Sample total CPU utilization from `/proc/stat`, as a percentage of the busy
+/// fraction over the delta since the previous call. `prev` carries the last
+/// `(idle, total)` jiffy counts between ticks; the first call seeds it and
+/// returns `None` (no baseline yet), as does any read/parse failure. Linux-only,
+/// which matches the deploy target — drop in a platform probe elsewhere.
+#[cfg(feature = "server")]
+async fn cpu_percent(prev: &mut Option<(u64, u64)>) -> Option<f64> {
+    let stat = tokio::fs::read_to_string("/proc/stat").await.ok()?;
+    // First line is the aggregate: "cpu  user nice system idle iowait irq …".
+    let cols: Vec<u64> = stat
+        .lines()
+        .next()?
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|t| t.parse().ok())
+        .collect();
+    if cols.len() < 4 {
+        return None;
+    }
+    let idle = cols[3] + cols.get(4).copied().unwrap_or(0); // idle + iowait
+    let total: u64 = cols.iter().sum();
+    let (pidle, ptotal) = (*prev).replace((idle, total))?;
+    let dtotal = total.checked_sub(ptotal)? as f64;
+    let didle = idle.checked_sub(pidle)? as f64;
+    if dtotal <= 0.0 {
+        return None;
+    }
+    Some(((dtotal - didle) / dtotal * 100.0).clamp(0.0, 100.0))
+}
+
+/// Sample memory utilization from `/proc/meminfo` as the percentage of RAM in
+/// use, using the kernel's `MemAvailable` estimate as the free figure (so
+/// reclaimable cache/buffers don't count as "used", matching what tools like
+/// `free`/`htop` report). Instantaneous — no baseline needed. Returns `None` if
+/// either field is missing/unparseable. Linux-only, like [`cpu_percent`].
+#[cfg(feature = "server")]
+async fn mem_percent() -> Option<f64> {
+    let info = tokio::fs::read_to_string("/proc/meminfo").await.ok()?;
+    // Lines look like "MemTotal:       16331234 kB"; we want the first number.
+    let kb = |key: &str| {
+        info.lines()
+            .find_map(|l| l.strip_prefix(key)?.split_whitespace().next())
+            .and_then(|n| n.parse::<f64>().ok())
+    };
+    let total = kb("MemTotal:")?;
+    let avail = kb("MemAvailable:")?;
+    if total <= 0.0 {
+        return None;
+    }
+    Some(((total - avail) / total * 100.0).clamp(0.0, 100.0))
 }
 
 #[component]

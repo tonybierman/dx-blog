@@ -129,6 +129,47 @@ pub enum LiveEvent {
     /// total after it (so every client converges on the same count rather than
     /// each tracking its own increments).
     Reaction { kind: String, total: i64 },
+    /// One sample on a named live data series, for charts embedded in the post
+    /// body (the `livechart` embed). `topic` lets several charts on one page
+    /// each follow their own feed; `value` is the newest point to append. Sent
+    /// under the SSE event name `data`.
+    Data { topic: String, value: f64 },
+}
+
+/// One message on the site-wide *admin* live channel (`crate::server::live`'s
+/// `admin_tx`), delivered to the admin dashboard / moderation queue over the
+/// authorized `/api/admin/live` SSE stream. Deliberately SEPARATE from
+/// [`LiveEvent`] and carries **notification metadata only** — never a comment
+/// body — so unmoderated content can't ride a public per-post channel and the
+/// payload stays low-sensitivity. Full comment text reaches the moderation queue
+/// the usual way: an authoritative `admin_list_comments` refetch (which the
+/// `Comment`/`CommentRemoved` events trigger). Each variant is sent under a
+/// matching SSE event name (`comment`/`reaction`/`comment_removed`); the
+/// `#[serde(tag = "type")]` envelope gives the client a single parse path.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AdminEvent {
+    /// A comment was created or moderated. `status` is its current state
+    /// (`pending`/`approved`/`rejected`); `id` is for dedupe and moderation
+    /// links. No body — only who/where/what-status.
+    Comment {
+        id: i64,
+        post_id: i64,
+        post_title: String,
+        post_slug: String,
+        display_name: String,
+        status: String,
+    },
+    /// A reaction landed on a post, with the post's authoritative running total.
+    Reaction {
+        post_id: i64,
+        post_title: String,
+        post_slug: String,
+        kind: String,
+        total: i64,
+    },
+    /// A comment was deleted — drop it from any open moderation view.
+    CommentRemoved { id: i64 },
 }
 
 wire_struct! {
@@ -162,6 +203,7 @@ wire_struct! {
         pub pending_comment_count: i64,
         pub subscriber_count: i64,
         pub view_count: i64,
+        pub reaction_count: i64,
     }
 }
 

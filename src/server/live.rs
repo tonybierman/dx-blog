@@ -19,21 +19,22 @@
 
 #![cfg(feature = "server")]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::extract::{Extension, Path};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use futures::Stream;
+use axum::response::IntoResponse;
+use futures::{stream, Stream, StreamExt};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::model::LiveEvent;
+use crate::model::{AdminEvent, LiveEvent};
 
 /// The `axum::Extension` that carries the shared hub to every route and server
 /// fn. Mirrors `DbExtension`/`MailExtension` in `crate::server`.
@@ -45,6 +46,17 @@ pub type HubExtension = Extension<Arc<LiveHub>>;
 /// (presence is absolute, so it self-heals immediately).
 const CHANNEL_CAP: usize = 256;
 
+/// Per-(post, topic) cap on retained live-data points. Bounds both the backlog
+/// replayed to a new connection and the hub's memory. Matches the client's
+/// `MAX_DATA_POINTS` so a fresh reader can be handed a full client buffer.
+const HISTORY_MAX: usize = 256;
+
+/// Capacity of the single site-wide admin channel. Larger than `CHANNEL_CAP`
+/// because reactions/claps across the whole site funnel through it; a slow admin
+/// that lags past this just skips frames (the dashboard's authoritative
+/// `analytics_summary` refetch reconciles any drift).
+const ADMIN_CHANNEL_CAP: usize = 512;
+
 /// One post's fan-out channel plus its live-reader tally.
 struct PostChannel {
     tx: broadcast::Sender<LiveEvent>,
@@ -54,36 +66,102 @@ struct PostChannel {
     presence: HashMap<String, u32>,
 }
 
-/// In-memory registry of per-post live channels. Cheap to clone (it's always
-/// behind an `Arc`); all state is guarded by one `Mutex`.
+/// All hub state, behind one mutex so a [`subscribe`](LiveHub::subscribe)
+/// snapshot and a [`publish`](LiveHub::publish) can't interleave — that's what
+/// makes the backlog/live cut exact (no point dropped or duplicated on connect).
 #[derive(Default)]
+struct HubState {
+    /// Live fan-out channels, created on first subscribe and reclaimed when the
+    /// last reader of a post leaves.
+    channels: HashMap<i64, PostChannel>,
+    /// Recent `Data` points per post/topic, newest last. Unlike `channels` this
+    /// is *retained* across presence GC, so a reader who connects when nobody
+    /// else is present (or who is the first to arrive after a producer started)
+    /// still gets backfilled. Capped per topic by `HISTORY_MAX`; entries persist
+    /// for any post a producer has ever pushed to (fine for the handful of posts
+    /// that host a live chart — add GC if that ever stops being true).
+    history: HashMap<i64, HashMap<String, VecDeque<f64>>>,
+}
+
+/// In-memory registry of per-post live channels plus the one site-wide admin
+/// channel. Cheap to clone (it's always behind an `Arc`); per-post state is
+/// guarded by one `Mutex`, while the admin sender is internally synchronized so
+/// it needs no lock.
 pub struct LiveHub {
-    posts: Mutex<HashMap<i64, PostChannel>>,
+    state: Mutex<HubState>,
+    /// Site-wide admin broadcast. A singleton with no presence/GC: created once
+    /// and shared by every admin SSE connection. Carries [`AdminEvent`]s only
+    /// (notification metadata, never comment bodies).
+    admin_tx: broadcast::Sender<AdminEvent>,
 }
 
 impl LiveHub {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Arc::new(Self {
+            state: Mutex::new(HubState::default()),
+            admin_tx: broadcast::channel(ADMIN_CHANNEL_CAP).0,
+        })
+    }
+
+    /// Fan an [`AdminEvent`] out to every connected admin. A no-op when no admin
+    /// is currently listening (`send` only errors with zero receivers).
+    pub fn publish_admin(&self, event: AdminEvent) {
+        let _ = self.admin_tx.send(event);
+    }
+
+    /// Subscribe to the site-wide admin channel. Unlike [`subscribe`](Self::subscribe)
+    /// there's no presence or backlog — admins get events from connect onward and
+    /// rely on their authoritative fetches for the baseline.
+    pub fn subscribe_admin(&self) -> broadcast::Receiver<AdminEvent> {
+        self.admin_tx.subscribe()
     }
 
     /// Subscribe to a post's events and register one unit of presence. Returns
-    /// the receiver to stream from and a guard whose `Drop` removes the presence
-    /// again. The current (post-increment) reader count is broadcast so the
-    /// just-joined client — and everyone already reading — sees it immediately.
+    /// the receiver to stream from, a guard whose `Drop` removes the presence
+    /// again, and the retained data backlog as a list of `Data` events to replay
+    /// to this connection before live events flow. The current (post-increment)
+    /// reader count is broadcast so the just-joined client — and everyone already
+    /// reading — sees it immediately.
+    ///
+    /// The backlog snapshot and the `tx.subscribe()` happen under the same lock,
+    /// so relative to any `publish` the cut is exact: a point is either in the
+    /// returned backlog or delivered on `rx`, never both and never neither.
     pub fn subscribe(
         self: &Arc<Self>,
         post_id: i64,
         visitor: String,
-    ) -> (broadcast::Receiver<LiveEvent>, PresenceGuard) {
-        let (rx, count) = {
-            let mut posts = self.posts.lock().unwrap();
-            let ch = posts.entry(post_id).or_insert_with(|| PostChannel {
-                tx: broadcast::channel(CHANNEL_CAP).0,
-                presence: HashMap::new(),
-            });
+    ) -> (
+        broadcast::Receiver<LiveEvent>,
+        PresenceGuard,
+        Vec<LiveEvent>,
+    ) {
+        let (rx, count, backlog) = {
+            let mut state = self.state.lock().unwrap();
+            let backlog = state
+                .history
+                .get(&post_id)
+                .map(|topics| {
+                    topics
+                        .iter()
+                        .flat_map(|(topic, pts)| {
+                            pts.iter().map(move |&value| LiveEvent::Data {
+                                topic: topic.clone(),
+                                value,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let ch = state
+                .channels
+                .entry(post_id)
+                .or_insert_with(|| PostChannel {
+                    tx: broadcast::channel(CHANNEL_CAP).0,
+                    presence: HashMap::new(),
+                });
             let rx = ch.tx.subscribe();
             *ch.presence.entry(visitor.clone()).or_insert(0) += 1;
-            (rx, ch.presence.len() as i64)
+            (rx, ch.presence.len() as i64, backlog)
         }; // lock released before publish() re-locks — never held across the send.
         self.publish(post_id, LiveEvent::Presence { count });
         (
@@ -93,14 +171,29 @@ impl LiveHub {
                 post_id,
                 visitor,
             },
+            backlog,
         )
     }
 
-    /// Fan an event out to every subscriber of `post_id`. A no-op if the post has
-    /// no channel or no receivers (`send` only errors when there are none).
+    /// Fan an event out to every subscriber of `post_id`. `Data` points are also
+    /// appended to the retained per-topic history (so late joiners get them as
+    /// backlog) regardless of whether anyone is currently connected. The live
+    /// send is a no-op if the post has no channel or no receivers.
     pub fn publish(&self, post_id: i64, event: LiveEvent) {
-        let posts = self.posts.lock().unwrap();
-        if let Some(ch) = posts.get(&post_id) {
+        let mut state = self.state.lock().unwrap();
+        if let LiveEvent::Data { topic, value } = &event {
+            let series = state
+                .history
+                .entry(post_id)
+                .or_default()
+                .entry(topic.clone())
+                .or_default();
+            series.push_back(*value);
+            while series.len() > HISTORY_MAX {
+                series.pop_front();
+            }
+        }
+        if let Some(ch) = state.channels.get(&post_id) {
             let _ = ch.tx.send(event);
         }
     }
@@ -118,8 +211,8 @@ pub struct PresenceGuard {
 impl Drop for PresenceGuard {
     fn drop(&mut self) {
         let new_count = {
-            let mut posts = self.hub.posts.lock().unwrap();
-            let Some(ch) = posts.get_mut(&self.post_id) else {
+            let mut state = self.hub.state.lock().unwrap();
+            let Some(ch) = state.channels.get_mut(&self.post_id) else {
                 return;
             };
             if let Some(n) = ch.presence.get_mut(&self.visitor) {
@@ -132,9 +225,10 @@ impl Drop for PresenceGuard {
             // Reclaim the channel when nobody is left. `receiver_count()` is
             // accurate here because the SSE stream drops its `BroadcastStream`
             // (and thus the receiver) before dropping this guard — see the field
-            // order in `LiveStream`.
+            // order in `LiveStream`. The post's data `history` is intentionally
+            // NOT removed here, so the next reader to arrive still gets backfill.
             if ch.presence.is_empty() && ch.tx.receiver_count() == 0 {
-                posts.remove(&self.post_id);
+                state.channels.remove(&self.post_id);
                 None // nobody to notify
             } else {
                 Some(count)
@@ -167,6 +261,7 @@ impl Stream for LiveStream {
                         LiveEvent::Presence { .. } => "presence",
                         LiveEvent::Comment(_) => "comment",
                         LiveEvent::Reaction { .. } => "reaction",
+                        LiveEvent::Data { .. } => "data",
                     };
                     match serde_json::to_string(&ev) {
                         Ok(json) => Poll::Ready(Some(Ok(Event::default().event(name).data(json)))),
@@ -196,11 +291,88 @@ pub async fn live_handler(
     headers: HeaderMap,
 ) -> impl axum::response::IntoResponse {
     let visitor = crate::server::analytics::visitor_hash(&headers);
-    let (rx, guard) = hub.subscribe(post_id, visitor);
-    let stream = LiveStream {
+    let (rx, guard, backlog) = hub.subscribe(post_id, visitor);
+    // Replay the retained data points first (as the same `data` events live
+    // points use), then transition to the live broadcast. The client's
+    // `use_live` accumulates both identically, so the chart is backfilled with
+    // no separate fetch and no client-side change.
+    let history = backlog
+        .into_iter()
+        .filter_map(|ev| {
+            serde_json::to_string(&ev).ok().map(|json| {
+                Ok::<_, std::convert::Infallible>(Event::default().event("data").data(json))
+            })
+        })
+        .collect::<Vec<_>>();
+    let live = LiveStream {
         inner: BroadcastStream::new(rx),
         _guard: guard,
     };
+    let stream = stream::iter(history).chain(live);
     // Keep-alive comments stop idle connections (and proxies) from timing out.
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+}
+
+/// Adapts the admin `BroadcastStream` into SSE events. The admin sibling of
+/// [`LiveStream`] — no presence guard (the admin channel has no presence), just
+/// the variant→event-name mapping and `Lagged` skipping.
+struct AdminStream {
+    inner: BroadcastStream<AdminEvent>,
+}
+
+impl Stream for AdminStream {
+    type Item = Result<Event, std::convert::Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            return match Pin::new(&mut self.inner).poll_next(cx) {
+                Poll::Ready(Some(Ok(ev))) => {
+                    let name = match &ev {
+                        AdminEvent::Comment { .. } => "comment",
+                        AdminEvent::Reaction { .. } => "reaction",
+                        AdminEvent::CommentRemoved { .. } => "comment_removed",
+                    };
+                    match serde_json::to_string(&ev) {
+                        Ok(json) => Poll::Ready(Some(Ok(Event::default().event(name).data(json)))),
+                        Err(_) => continue,
+                    }
+                }
+                Poll::Ready(Some(Err(BroadcastStreamRecvError::Lagged(_)))) => continue,
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Pending => Poll::Pending,
+            };
+        }
+    }
+}
+
+/// `GET /api/admin/live` — the site-wide admin event stream (comments +
+/// reactions), for the live dashboard and moderation queue.
+///
+/// Unlike `live_handler` this is NOT public: it carries cross-post moderation
+/// signals, so it requires a signed-in user holding `COMMENTS_MODERATE`. A
+/// browser `EventSource` can't set headers but does send the session cookie, and
+/// `install()` layers the session/auth middleware over this route, so the
+/// `Session` extractor resolves here. On refusal we return a real `403` (not an
+/// empty `200`) so the client stops rather than reconnecting forever.
+pub async fn admin_live_handler(
+    auth: arium_dioxus::auth::Session,
+    Extension(hub): HubExtension,
+) -> axum::response::Response {
+    let allowed = auth
+        .current_user
+        .as_ref()
+        .filter(|u| !u.anonymous)
+        .is_some_and(|u| {
+            u.permissions
+                .contains(crate::auth_tokens::COMMENTS_MODERATE)
+        });
+    if !allowed {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let stream = AdminStream {
+        inner: BroadcastStream::new(hub.subscribe_admin()),
+    };
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response()
 }

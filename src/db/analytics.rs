@@ -38,7 +38,8 @@ pub async fn analytics_summary_db(pool: &SqlitePool) -> Result<AnalyticsSummary,
           (SELECT COUNT(*) FROM comments) AS comment_count,
           (SELECT COUNT(*) FROM comments WHERE status = 'pending') AS pending_comment_count,
           (SELECT COUNT(*) FROM subscribers) AS subscriber_count,
-          (SELECT COUNT(*) FROM post_views) AS view_count
+          (SELECT COUNT(*) FROM post_views) AS view_count,
+          (SELECT COUNT(*) FROM reactions) AS reaction_count
         "#,
     )
     .fetch_one(pool)

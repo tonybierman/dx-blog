@@ -6,9 +6,9 @@ use crate::model::{CommentView, RecentComment};
 
 #[cfg(feature = "server")]
 use crate::db::comments::{
-    burst_count_db, commenter_cooldown_email_db, commenter_cooldown_uid_db, fetch_comment_by_id_db,
-    has_prior_approved_comment_db, insert_comment_db, list_comments_db, post_is_published_db,
-    recent_comments_db,
+    burst_count_db, comment_with_post_db, commenter_cooldown_email_db, commenter_cooldown_uid_db,
+    fetch_comment_by_id_db, has_prior_approved_comment_db, insert_comment_db, list_comments_db,
+    post_is_published_db, recent_comments_db,
 };
 #[cfg(feature = "server")]
 use crate::server::{live::HubExtension, looks_like_email, sfe, DbExtension};
@@ -170,6 +170,21 @@ pub async fn create_comment(
     // Only approved comments are public, so only they go out live.
     if view.status == "approved" {
         hub.publish(post_id, crate::model::LiveEvent::Comment(view.clone()));
+    }
+
+    // Notify admins of EVERY new comment, pending or approved — this is the only
+    // live signal for pending comments (they never touch the public per-post
+    // channel). Best-effort: the comment is already stored, so a failed notice
+    // lookup must not fail the request.
+    if let Ok(c) = comment_with_post_db(&db.0, row_id).await {
+        hub.publish_admin(crate::model::AdminEvent::Comment {
+            id: c.id,
+            post_id: c.post_id,
+            post_title: c.post_title,
+            post_slug: c.post_slug,
+            display_name: c.display_name,
+            status: c.status,
+        });
     }
 
     Ok(view)

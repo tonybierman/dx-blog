@@ -9,8 +9,8 @@ use dioxus::prelude::*;
 
 #[cfg(feature = "server")]
 use crate::db::reactions::{
-    insert_reaction_db, post_is_published_db, reaction_burst_count_db, reaction_total_db,
-    reaction_visitor_total_db,
+    insert_reaction_db, post_is_published_db, post_title_slug_db, reaction_burst_count_db,
+    reaction_total_db, reaction_visitor_total_db,
 };
 #[cfg(feature = "server")]
 use crate::server::{live::HubExtension, sfe, DbExtension};
@@ -75,7 +75,25 @@ pub async fn add_reaction(post_id: i64, kind: String) -> Result<()> {
     // Broadcast the authoritative post-insert total so every client shows the
     // same number rather than tracking its own increments.
     let total = reaction_total_db(&db.0, post_id).await.map_err(sfe)?;
-    hub.publish(post_id, crate::model::LiveEvent::Reaction { kind, total });
+    hub.publish(
+        post_id,
+        crate::model::LiveEvent::Reaction {
+            kind: kind.clone(),
+            total,
+        },
+    );
+
+    // Mirror it onto the admin channel with a post label for the activity feed.
+    // Best-effort: a missing title must not fail the reaction.
+    if let Ok((post_title, post_slug)) = post_title_slug_db(&db.0, post_id).await {
+        hub.publish_admin(crate::model::AdminEvent::Reaction {
+            post_id,
+            post_title,
+            post_slug,
+            kind,
+            total,
+        });
+    }
     Ok(())
 }
 

@@ -65,7 +65,7 @@ pub fn EmbedBlock(name: String, props: Props) -> Element {
                 },
                 "livechart" => rsx! {
                     LiveChart {
-                        period_ms: prop_or(&props, "interval", 900u64).max(200),
+                        topic: prop(&props, "topic").unwrap_or("live").to_string(),
                         window: prop_or(&props, "window", 24usize).clamp(2, 200),
                         color: prop(&props, "color").unwrap_or("#22d3ee").to_string(),
                         label: prop(&props, "label").unwrap_or("Live feed").to_string(),
@@ -232,42 +232,69 @@ fn TweakViz(label: String) -> Element {
     }
 }
 
-/// `[[component:livechart interval=900 window=24 color="#..." label="..."]]` — a
-/// chart that looks like it's receiving a live data feed: every `interval` ms a
-/// new sample streams in on the right and the window scrolls left.
+/// `[[component:livechart topic="cpu" window=24 color="#..." label="..."]]` — a
+/// chart fed by the post's live (SSE) channel. Unlike the other embeds it runs
+/// no timer and synthesizes no data: it subscribes to the shared
+/// [`LiveHandle`](crate::live::LiveHandle) the reader provides via context and
+/// renders the `topic` series, appending each `LiveEvent::Data { topic, value }`
+/// the server pushes. This is the same real-time path reactions, comments, and
+/// presence ride — so charts get true server-driven data rather than a
+/// client-side simulation, and several charts on one page each track their own
+/// `topic`.
 ///
-/// The values come from a deterministic generator (no `rand`/clock), so the
-/// initial window renders identically on the server and the client's first paint
-/// — no hydration mismatch. The streaming only starts once `use_interval`'s task
-/// is polled on the client after hydration (it never ticks during SSR).
+/// Rendered outside a reader (e.g. an admin preview) there's no provider, so the
+/// handle is absent and the chart shows an idle placeholder rather than failing.
+/// During SSR — and until the first point arrives — the series is empty, so the
+/// server HTML and the client's first paint agree (same discipline the presence
+/// badge and reaction count already follow).
 #[component]
-fn LiveChart(period_ms: u64, window: usize, color: String, label: String) -> Element {
-    // Seed a full window so the chart looks populated before the first tick.
-    let mut step = use_signal(|| window as u64);
-    let mut data = use_signal(|| (0..window as u64).map(sample).collect::<Vec<f64>>());
+fn LiveChart(topic: String, window: usize, color: String, label: String) -> Element {
+    // Subscribe to this post's live data via the handle the reader provided.
+    // `None` when rendered without a provider — degrade to an idle chart then.
+    let live = try_use_context::<crate::live::LiveHandle>();
 
-    use_interval(Duration::from_millis(period_ms), move |()| {
-        let s = step() + 1;
-        step.set(s);
-        let mut d = data();
-        d.push(sample(s));
-        let overflow = d.len().saturating_sub(window);
-        if overflow > 0 {
-            d.drain(0..overflow);
-        }
-        data.set(d);
-    });
+    // The newest `window` points of our topic. Reading the signal here
+    // subscribes this component, so a pushed `Data` event re-renders the chart.
+    let series: Vec<f64> = live
+        .map(|h| {
+            let all = (h.data_points)();
+            let s = all.get(&topic).cloned().unwrap_or_default();
+            let start = s.len().saturating_sub(window);
+            s[start..].to_vec()
+        })
+        .unwrap_or_default();
 
-    let series = data();
+    // Nothing yet (SSR, no provider, or feed not started): show a quiet idle
+    // state instead of an empty/garbage plot.
+    if series.is_empty() {
+        return rsx! {
+            div { class: "rounded-xl border border-white/10 bg-white/[0.03] p-4",
+                div { class: "mb-2 flex items-center gap-2 text-sm",
+                    span { class: "inline-block h-2 w-2 animate-pulse rounded-full bg-white/30" }
+                    span { class: "text-xs uppercase tracking-wide text-white/40", "{label}" }
+                }
+                div { class: "flex h-40 items-center justify-center text-xs text-white/30",
+                    "Waiting for live data…"
+                }
+            }
+        };
+    }
+
     let latest = series.last().copied().unwrap_or(0.0);
 
     // Plot into a fixed 100×40 viewBox; the SVG scales to its container width.
+    // Real data has an unknown range, so auto-scale to the window's min/max
+    // (like StockChart) rather than assuming a fixed 0–100 domain.
     let (w, h, pad) = (100.0_f64, 40.0_f64, 2.0_f64);
     let n = series.len();
     let dx = if n > 1 { w / (n - 1) as f64 } else { 0.0 };
+    let lo = series.iter().cloned().fold(f64::MAX, f64::min);
+    let hi = series.iter().cloned().fold(f64::MIN, f64::max);
+    let range = (hi - lo).max(1e-6);
+    let span = h - pad * 2.0;
     let xy = |i: usize, v: f64| {
         let x = i as f64 * dx;
-        let y = h - pad - (v / 100.0) * (h - pad * 2.0);
+        let y = h - pad - (v - lo) / range * span;
         (x, y)
     };
     let line = series
@@ -308,17 +335,6 @@ fn LiveChart(period_ms: u64, window: usize, color: String, label: String) -> Ele
             }
         }
     }
-}
-
-/// Deterministic 0–100 sample for the live chart: two sines at different
-/// frequencies plus a cheap hashed jitter, so the feed wanders convincingly
-/// without a random source (keeping SSR and first client render in sync).
-fn sample(step: u64) -> f64 {
-    let t = step as f64;
-    let wave = (t * 0.35).sin() * 0.5 + (t * 0.11).sin() * 0.3;
-    let jitter = (step.wrapping_mul(2_654_435_761) % 1000) as f64 / 1000.0 - 0.5;
-    let v = 0.5 + 0.5 * (wave + jitter * 0.4);
-    (v.clamp(0.0, 1.0)) * 100.0
 }
 
 /// One OHLC candle plus its (synthetic) traded volume.

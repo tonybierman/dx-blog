@@ -47,6 +47,7 @@ Server-rendered and hydrated, SQLite-backed, styled with Tailwind v4.
 - [Getting started](docs/getting-started.md) — prerequisites and running locally
 - [Configuration](docs/configuration.md) — environment variables
 - [Development](docs/development.md) — checking the two build targets and running tests
+- [Live data & embedded charts](docs/live-data.md) — the SSE hub, `use_live`, and the `livechart` embed
 
 ## License
 

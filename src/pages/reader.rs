@@ -150,6 +150,11 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
     // Open the live channel for this post once; share the handle with the
     // presence badge, the reaction bar, and the comment section below.
     let live = use_live(post_id);
+    // Also expose it via context so `livechart` embeds rendered deep inside the
+    // markdown body can subscribe to live data without prop-drilling through the
+    // segment loop. Consumed with `try_use_context` in `crate::embeds`, so an
+    // embed rendered outside a reader (e.g. a preview) just degrades gracefully.
+    use_context_provider(|| live);
 
     let is_draft = post.status != crate::model::STATUS_PUBLISHED;
 

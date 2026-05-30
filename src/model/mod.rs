@@ -129,6 +129,11 @@ pub enum LiveEvent {
     /// total after it (so every client converges on the same count rather than
     /// each tracking its own increments).
     Reaction { kind: String, total: i64 },
+    /// One sample on a named live data series, for charts embedded in the post
+    /// body (the `livechart` embed). `topic` lets several charts on one page
+    /// each follow their own feed; `value` is the newest point to append. Sent
+    /// under the SSE event name `data`.
+    Data { topic: String, value: f64 },
 }
 
 wire_struct! {

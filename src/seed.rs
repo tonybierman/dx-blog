@@ -250,12 +250,17 @@ Drag the slider; the curve recomputes live in WASM on every input.
         (
             "rust-mdx-livechart",
             "Rust MDX: a live data feed",
-            "New samples stream in on a timer and the window scrolls — all client-side.",
+            "Samples stream in over the post's live (SSE) channel and the window scrolls.",
             "\
-New samples stream in on a timer and the window scrolls left — entirely \
-client-side, starting once the page hydrates.
+Samples arrive over the post's live (SSE) channel — the same real-time path \
+reactions and presence ride — and the window scrolls left as each new point \
+lands on the right. The charts hold no timer: each subscribes to a topic and \
+waits for the server to push. Here the server samples real host CPU and memory \
+every couple of seconds.
 
-[[component:livechart interval=800 window=28 color=\"#22d3ee\" label=\"Live feed\"]]",
+[[component:livechart topic=\"cpu\" window=28 color=\"#22d3ee\" label=\"CPU %\"]]
+
+[[component:livechart topic=\"mem\" window=28 color=\"#a855f7\" label=\"Memory %\"]]",
         ),
         (
             "rust-mdx-stockchart",

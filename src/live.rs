@@ -11,9 +11,17 @@
 //! `EventSource` reconnects automatically, and because presence is broadcast as
 //! an absolute count, a reconnect resyncs the badge on the next event.
 
+use std::collections::HashMap;
+
 use dioxus::prelude::*;
 
 use crate::model::CommentView;
+
+/// Per-topic cap on buffered live data points. A streaming feed is unbounded, so
+/// keep only the most recent points — generously more than any chart's `window`
+/// so each embed can slice its own view without the buffer growing forever.
+#[cfg(feature = "web")]
+const MAX_DATA_POINTS: usize = 256;
 
 /// One floating clap to animate in. Purely a client render artifact (it never
 /// crosses the wire), so it lives here rather than in `crate::model`. `id` is a
@@ -38,6 +46,10 @@ pub struct LiveHandle {
     /// Authoritative reaction total, updated from each reaction event. 0 until
     /// the first event arrives; the reader falls back to its initial fetch.
     pub reaction_count: Signal<i64>,
+    /// Buffered live data series keyed by topic, newest last. Fed by
+    /// `LiveEvent::Data`; `livechart` embeds read their own topic and render a
+    /// sliding window. Empty during SSR and until the first point arrives.
+    pub data_points: Signal<HashMap<String, Vec<f64>>>,
 }
 
 /// Open (on the wasm client) the live channel for `post_id` and expose its state
@@ -48,11 +60,13 @@ pub fn use_live(post_id: i64) -> LiveHandle {
     let live_comments = use_signal(Vec::<CommentView>::new);
     let claps = use_signal(Vec::<ClapBurst>::new);
     let reaction_count = use_signal(|| 0i64);
+    let data_points = use_signal(HashMap::<String, Vec<f64>>::new);
     let handle = LiveHandle {
         reading_now,
         live_comments,
         claps,
         reaction_count,
+        data_points,
     };
 
     #[cfg(feature = "web")]
@@ -64,6 +78,7 @@ pub fn use_live(post_id: i64) -> LiveHandle {
         let mut live_comments = live_comments;
         let mut claps = claps;
         let mut reaction_count = reaction_count;
+        let mut data_points = data_points;
 
         use_future(move || async move {
             let Ok(mut es) = EventSource::new(&format!("/api/live/{post_id}")) else {
@@ -75,7 +90,7 @@ pub fn use_live(post_id: i64) -> LiveHandle {
             // `Box::pin` them (no `alloc` combinator feature needed) before
             // `select_all`, which requires `Unpin` streams.
             let streams: Vec<std::pin::Pin<Box<EventSourceSubscription>>> =
-                ["presence", "comment", "reaction"]
+                ["presence", "comment", "reaction", "data"]
                     .into_iter()
                     .filter_map(|name| es.subscribe(name).ok())
                     .map(Box::pin)
@@ -119,6 +134,18 @@ pub fn use_live(post_id: i64) -> LiveHandle {
                             let overflow = v.len().saturating_sub(40);
                             if overflow > 0 {
                                 v.drain(0..overflow);
+                            }
+                        });
+                    }
+                    crate::model::LiveEvent::Data { topic, value } => {
+                        // Append to this topic's ring of recent samples; charts
+                        // reading the topic re-render on the signal write.
+                        data_points.with_mut(|m| {
+                            let series = m.entry(topic).or_default();
+                            series.push(value);
+                            let overflow = series.len().saturating_sub(MAX_DATA_POINTS);
+                            if overflow > 0 {
+                                series.drain(0..overflow);
                             }
                         });
                     }

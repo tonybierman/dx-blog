@@ -19,7 +19,7 @@
 
 #![cfg(feature = "server")]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
@@ -28,7 +28,7 @@ use std::time::Duration;
 use axum::extract::{Extension, Path};
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use futures::Stream;
+use futures::{stream, Stream, StreamExt};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
@@ -45,6 +45,11 @@ pub type HubExtension = Extension<Arc<LiveHub>>;
 /// (presence is absolute, so it self-heals immediately).
 const CHANNEL_CAP: usize = 256;
 
+/// Per-(post, topic) cap on retained live-data points. Bounds both the backlog
+/// replayed to a new connection and the hub's memory. Matches the client's
+/// `MAX_DATA_POINTS` so a fresh reader can be handed a full client buffer.
+const HISTORY_MAX: usize = 256;
+
 /// One post's fan-out channel plus its live-reader tally.
 struct PostChannel {
     tx: broadcast::Sender<LiveEvent>,
@@ -54,11 +59,28 @@ struct PostChannel {
     presence: HashMap<String, u32>,
 }
 
+/// All hub state, behind one mutex so a [`subscribe`](LiveHub::subscribe)
+/// snapshot and a [`publish`](LiveHub::publish) can't interleave — that's what
+/// makes the backlog/live cut exact (no point dropped or duplicated on connect).
+#[derive(Default)]
+struct HubState {
+    /// Live fan-out channels, created on first subscribe and reclaimed when the
+    /// last reader of a post leaves.
+    channels: HashMap<i64, PostChannel>,
+    /// Recent `Data` points per post/topic, newest last. Unlike `channels` this
+    /// is *retained* across presence GC, so a reader who connects when nobody
+    /// else is present (or who is the first to arrive after a producer started)
+    /// still gets backfilled. Capped per topic by `HISTORY_MAX`; entries persist
+    /// for any post a producer has ever pushed to (fine for the handful of posts
+    /// that host a live chart — add GC if that ever stops being true).
+    history: HashMap<i64, HashMap<String, VecDeque<f64>>>,
+}
+
 /// In-memory registry of per-post live channels. Cheap to clone (it's always
 /// behind an `Arc`); all state is guarded by one `Mutex`.
 #[derive(Default)]
 pub struct LiveHub {
-    posts: Mutex<HashMap<i64, PostChannel>>,
+    state: Mutex<HubState>,
 }
 
 impl LiveHub {
@@ -67,23 +89,51 @@ impl LiveHub {
     }
 
     /// Subscribe to a post's events and register one unit of presence. Returns
-    /// the receiver to stream from and a guard whose `Drop` removes the presence
-    /// again. The current (post-increment) reader count is broadcast so the
-    /// just-joined client — and everyone already reading — sees it immediately.
+    /// the receiver to stream from, a guard whose `Drop` removes the presence
+    /// again, and the retained data backlog as a list of `Data` events to replay
+    /// to this connection before live events flow. The current (post-increment)
+    /// reader count is broadcast so the just-joined client — and everyone already
+    /// reading — sees it immediately.
+    ///
+    /// The backlog snapshot and the `tx.subscribe()` happen under the same lock,
+    /// so relative to any `publish` the cut is exact: a point is either in the
+    /// returned backlog or delivered on `rx`, never both and never neither.
     pub fn subscribe(
         self: &Arc<Self>,
         post_id: i64,
         visitor: String,
-    ) -> (broadcast::Receiver<LiveEvent>, PresenceGuard) {
-        let (rx, count) = {
-            let mut posts = self.posts.lock().unwrap();
-            let ch = posts.entry(post_id).or_insert_with(|| PostChannel {
-                tx: broadcast::channel(CHANNEL_CAP).0,
-                presence: HashMap::new(),
-            });
+    ) -> (
+        broadcast::Receiver<LiveEvent>,
+        PresenceGuard,
+        Vec<LiveEvent>,
+    ) {
+        let (rx, count, backlog) = {
+            let mut state = self.state.lock().unwrap();
+            let backlog = state
+                .history
+                .get(&post_id)
+                .map(|topics| {
+                    topics
+                        .iter()
+                        .flat_map(|(topic, pts)| {
+                            pts.iter().map(move |&value| LiveEvent::Data {
+                                topic: topic.clone(),
+                                value,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let ch = state
+                .channels
+                .entry(post_id)
+                .or_insert_with(|| PostChannel {
+                    tx: broadcast::channel(CHANNEL_CAP).0,
+                    presence: HashMap::new(),
+                });
             let rx = ch.tx.subscribe();
             *ch.presence.entry(visitor.clone()).or_insert(0) += 1;
-            (rx, ch.presence.len() as i64)
+            (rx, ch.presence.len() as i64, backlog)
         }; // lock released before publish() re-locks — never held across the send.
         self.publish(post_id, LiveEvent::Presence { count });
         (
@@ -93,14 +143,29 @@ impl LiveHub {
                 post_id,
                 visitor,
             },
+            backlog,
         )
     }
 
-    /// Fan an event out to every subscriber of `post_id`. A no-op if the post has
-    /// no channel or no receivers (`send` only errors when there are none).
+    /// Fan an event out to every subscriber of `post_id`. `Data` points are also
+    /// appended to the retained per-topic history (so late joiners get them as
+    /// backlog) regardless of whether anyone is currently connected. The live
+    /// send is a no-op if the post has no channel or no receivers.
     pub fn publish(&self, post_id: i64, event: LiveEvent) {
-        let posts = self.posts.lock().unwrap();
-        if let Some(ch) = posts.get(&post_id) {
+        let mut state = self.state.lock().unwrap();
+        if let LiveEvent::Data { topic, value } = &event {
+            let series = state
+                .history
+                .entry(post_id)
+                .or_default()
+                .entry(topic.clone())
+                .or_default();
+            series.push_back(*value);
+            while series.len() > HISTORY_MAX {
+                series.pop_front();
+            }
+        }
+        if let Some(ch) = state.channels.get(&post_id) {
             let _ = ch.tx.send(event);
         }
     }
@@ -118,8 +183,8 @@ pub struct PresenceGuard {
 impl Drop for PresenceGuard {
     fn drop(&mut self) {
         let new_count = {
-            let mut posts = self.hub.posts.lock().unwrap();
-            let Some(ch) = posts.get_mut(&self.post_id) else {
+            let mut state = self.hub.state.lock().unwrap();
+            let Some(ch) = state.channels.get_mut(&self.post_id) else {
                 return;
             };
             if let Some(n) = ch.presence.get_mut(&self.visitor) {
@@ -132,9 +197,10 @@ impl Drop for PresenceGuard {
             // Reclaim the channel when nobody is left. `receiver_count()` is
             // accurate here because the SSE stream drops its `BroadcastStream`
             // (and thus the receiver) before dropping this guard — see the field
-            // order in `LiveStream`.
+            // order in `LiveStream`. The post's data `history` is intentionally
+            // NOT removed here, so the next reader to arrive still gets backfill.
             if ch.presence.is_empty() && ch.tx.receiver_count() == 0 {
-                posts.remove(&self.post_id);
+                state.channels.remove(&self.post_id);
                 None // nobody to notify
             } else {
                 Some(count)
@@ -167,6 +233,7 @@ impl Stream for LiveStream {
                         LiveEvent::Presence { .. } => "presence",
                         LiveEvent::Comment(_) => "comment",
                         LiveEvent::Reaction { .. } => "reaction",
+                        LiveEvent::Data { .. } => "data",
                     };
                     match serde_json::to_string(&ev) {
                         Ok(json) => Poll::Ready(Some(Ok(Event::default().event(name).data(json)))),
@@ -196,11 +263,24 @@ pub async fn live_handler(
     headers: HeaderMap,
 ) -> impl axum::response::IntoResponse {
     let visitor = crate::server::analytics::visitor_hash(&headers);
-    let (rx, guard) = hub.subscribe(post_id, visitor);
-    let stream = LiveStream {
+    let (rx, guard, backlog) = hub.subscribe(post_id, visitor);
+    // Replay the retained data points first (as the same `data` events live
+    // points use), then transition to the live broadcast. The client's
+    // `use_live` accumulates both identically, so the chart is backfilled with
+    // no separate fetch and no client-side change.
+    let history = backlog
+        .into_iter()
+        .filter_map(|ev| {
+            serde_json::to_string(&ev).ok().map(|json| {
+                Ok::<_, std::convert::Infallible>(Event::default().event("data").data(json))
+            })
+        })
+        .collect::<Vec<_>>();
+    let live = LiveStream {
         inner: BroadcastStream::new(rx),
         _guard: guard,
     };
+    let stream = stream::iter(history).chain(live);
     // Keep-alive comments stop idle connections (and proxies) from timing out.
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }

@@ -10,7 +10,7 @@ use dioxus_sdk_time::use_interval;
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
 use crate::live::{use_live, LiveHandle};
 use crate::model::CommentView;
-use crate::pages::widgets::{CategoryList, FeedSection, FeedShape, TagList};
+use crate::pages::widgets::{CategoryList, FeedSection, FeedShape, ResponsiveImg, TagList};
 use crate::server::authors::get_author_profile;
 use crate::server::comments::{create_comment, list_comments};
 use crate::server::posts::{get_post, list_archive, list_posts, posts_by_author};
@@ -166,7 +166,14 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                 }
             }
             if let Some(img) = post.featured_image_url.clone() {
-                img { class: "mb-6 max-h-96 w-full rounded-xl object-cover", src: "{img}", alt: "{post.title}" }
+                ResponsiveImg {
+                    src: img,
+                    alt: post.title.clone(),
+                    class: "mb-6 max-h-96 w-full rounded-xl object-cover".to_string(),
+                    sizes: "(max-width: 768px) 100vw, 768px".to_string(),
+                    srcset_webp: post.featured_srcset_webp.clone(),
+                    srcset_avif: post.featured_srcset_avif.clone(),
+                }
             }
             div { class: "flex items-start justify-between gap-4",
                 h1 { class: "text-3xl font-bold", "{post.title}" }

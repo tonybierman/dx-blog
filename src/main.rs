@@ -170,6 +170,20 @@ fn main() {
             .execute(&pool)
             .await?;
 
+        // One-shot, idempotent rendition backfill for uploads made before the
+        // responsive-image pipeline existed (or before `--features avif` was
+        // turned on — re-running regenerates only what's missing). Gated on an
+        // explicit opt-in so a normal boot never does heavy image work; the
+        // generator skips any media that already has variants.
+        if matches!(
+            std::env::var("DX_BACKFILL_IMAGES").ok().as_deref(),
+            Some("1")
+        ) {
+            if let Err(e) = backfill_image_variants(&pool).await {
+                tracing::warn!(target: "media", "image backfill failed: {e}");
+            }
+        }
+
         // Seed demo data on a fresh database (no-op once posts exist).
         // GATED on an explicit opt-in, in every build: seeding plants demo
         // content and accounts, so it must never run unattended on a deploy.
@@ -353,6 +367,63 @@ fn main() {
 
         arium_dioxus::install(router, cfg).await
     });
+}
+
+/// Generate responsive renditions for every local upload that has none yet
+/// (`DX_BACKFILL_IMAGES=1`). Idempotent: media with variants is skipped, so it's
+/// safe to re-run. Reuses the same pipeline as the upload path — decode on a
+/// blocking thread, write WebP (+AVIF under the feature), record each in
+/// `media_variants`. Errors on a single image are logged and skipped.
+#[cfg(feature = "server")]
+async fn backfill_image_variants(pool: &arium_dioxus::pool::Pool) -> Result<(), sqlx::Error> {
+    let todo = crate::db::media::media_without_variants_db(pool).await?;
+    if todo.is_empty() {
+        tracing::info!(target: "media", "image backfill: nothing to do");
+        return Ok(());
+    }
+    tracing::info!(target: "media", "image backfill: {} upload(s) to process", todo.len());
+
+    for (id, url) in todo {
+        let Some(stored) = url.strip_prefix("/uploads/") else {
+            continue;
+        };
+        let path = format!("uploads/{stored}");
+        let Ok(bytes) = std::fs::read(&path) else {
+            tracing::warn!(target: "media", "backfill: file missing for media {id}: {path}");
+            continue;
+        };
+        let stem = stored
+            .rsplit_once('.')
+            .map(|(s, _)| s.to_string())
+            .unwrap_or_else(|| stored.to_string());
+
+        let Ok(Some(rends)) =
+            tokio::task::spawn_blocking(move || crate::server::images::generate_renditions(&bytes))
+                .await
+        else {
+            tracing::info!(target: "media", "backfill: no renditions for media {id}");
+            continue;
+        };
+        for v in rends {
+            let fname = format!("{stem}-{}.{}", v.label, v.format);
+            if std::fs::write(format!("uploads/{fname}"), &v.bytes).is_ok() {
+                let vurl = format!("/uploads/{fname}");
+                let _ = crate::db::media::insert_variant_db(
+                    pool,
+                    id,
+                    v.label,
+                    v.format,
+                    v.width as i64,
+                    v.height as i64,
+                    &vurl,
+                    v.bytes.len() as i64,
+                )
+                .await;
+            }
+        }
+    }
+    tracing::info!(target: "media", "image backfill: done");
+    Ok(())
 }
 
 /// Sample total CPU utilization from `/proc/stat`, as a percentage of the busy

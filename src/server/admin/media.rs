@@ -2,14 +2,15 @@
 
 use dioxus::prelude::*;
 
-use crate::model::MediaItem;
+use crate::model::{MediaItem, PostUsage};
 
 #[cfg(feature = "server")]
 use crate::auth_tokens::{MEDIA_UPLOAD, POSTS_WRITE_ANY};
 #[cfg(feature = "server")]
 use crate::db::media::{
     delete_media_db, get_media_created_at_db, get_media_row_db, insert_media_stub_db,
-    list_media_db, update_media_url_db,
+    insert_variant_db, list_media_db, media_usage_db, post_image_corpus_db, update_media_url_db,
+    variant_urls_for_media_db,
 };
 #[cfg(feature = "server")]
 use crate::server::{require_perm, sfe, DbExtension};
@@ -17,7 +18,33 @@ use crate::server::{require_perm, sfe, DbExtension};
 #[get("/api/admin/media", auth: arium_dioxus::auth::Session, db: DbExtension)]
 pub async fn list_media() -> Result<Vec<MediaItem>> {
     require_perm(&auth, MEDIA_UPLOAD)?;
-    Ok(list_media_db(&db.0).await.map_err(sfe)?)
+    let mut items = list_media_db(&db.0).await.map_err(sfe)?;
+
+    // Derive each item's usage count in one pass over the post corpus (cover =
+    // featured URL match; body = the URL embedded in the markdown), rather than a
+    // query per media row. Accurate by construction — usage isn't stored anywhere
+    // to fall out of sync.
+    let corpus = post_image_corpus_db(&db.0).await.map_err(sfe)?;
+    for m in &mut items {
+        m.usage_count = corpus
+            .iter()
+            .filter(|(featured, body)| {
+                featured.as_deref() == Some(m.url.as_str()) || body.contains(&m.url)
+            })
+            .count() as i64;
+    }
+    Ok(items)
+}
+
+/// Which posts use a given media item (cover and/or inline body). Backs the media
+/// library's usage panel and the delete confirmation.
+#[post("/api/admin/media/usage", auth: arium_dioxus::auth::Session, db: DbExtension)]
+pub async fn media_usage(id: i64) -> Result<Vec<PostUsage>> {
+    require_perm(&auth, MEDIA_UPLOAD)?;
+    let Some((url, _)) = get_media_row_db(&db.0, id).await.map_err(sfe)? else {
+        return Ok(Vec::new());
+    };
+    Ok(media_usage_db(&db.0, &url).await.map_err(sfe)?)
 }
 
 /// Upload an image (base64-encoded). Stored under ./uploads and served at /uploads.
@@ -77,6 +104,46 @@ pub async fn upload_media(filename: String, data_base64: String) -> Result<Media
 
     update_media_url_db(&db.0, id, &url).await.map_err(sfe)?;
 
+    // Generate WordPress-style responsive renditions (WebP, plus AVIF when built
+    // with the `avif` feature) off the decoded bytes. Best-effort: a decode/encode
+    // failure (e.g. an animated GIF or a format we don't decode) just leaves the
+    // original standing with no `srcset`. The CPU-bound work runs on a blocking
+    // thread so it doesn't stall the async runtime.
+    let stem = stored
+        .rsplit_once('.')
+        .map(|(s, _)| s.to_string())
+        .unwrap_or_else(|| stored.clone());
+    let data = bytes.clone();
+    match tokio::task::spawn_blocking(move || crate::server::images::generate_renditions(&data))
+        .await
+    {
+        Ok(Some(rends)) => {
+            for v in rends {
+                let fname = format!("{stem}-{}.{}", v.label, v.format);
+                if std::fs::write(format!("uploads/{fname}"), &v.bytes).is_ok() {
+                    let vurl = format!("/uploads/{fname}");
+                    let _ = insert_variant_db(
+                        &db.0,
+                        id,
+                        v.label,
+                        v.format,
+                        v.width as i64,
+                        v.height as i64,
+                        &vurl,
+                        v.bytes.len() as i64,
+                    )
+                    .await;
+                }
+            }
+        }
+        Ok(None) => {
+            tracing::info!(target: "media", "media {id}: no renditions (undecodable image?)");
+        }
+        Err(e) => {
+            tracing::warn!(target: "media", "media {id}: rendition task failed: {e}");
+        }
+    }
+
     let created_at = get_media_created_at_db(&db.0, id).await.map_err(sfe)?;
 
     Ok(MediaItem {
@@ -85,6 +152,7 @@ pub async fn upload_media(filename: String, data_base64: String) -> Result<Media
         url,
         uploaded_by: uid,
         created_at,
+        usage_count: 0,
     })
 }
 
@@ -109,11 +177,19 @@ pub async fn delete_media(id: i64) -> Result<()> {
         return Err(ServerFnError::new("You can only delete media you uploaded.").into());
     }
 
+    // Grab the rendition file paths before the rows cascade away with the parent.
+    let variant_urls = variant_urls_for_media_db(&db.0, id)
+        .await
+        .unwrap_or_default();
+
     delete_media_db(&db.0, id).await.map_err(sfe)?;
 
-    // Best-effort: remove the file on disk so uploads don't accumulate forever.
-    if let Some(name) = url.strip_prefix("/uploads/") {
-        let _ = std::fs::remove_file(format!("uploads/{name}"));
+    // Best-effort: remove the original and every rendition on disk so uploads
+    // don't accumulate forever.
+    for u in std::iter::once(url).chain(variant_urls) {
+        if let Some(name) = u.strip_prefix("/uploads/") {
+            let _ = std::fs::remove_file(format!("uploads/{name}"));
+        }
     }
     Ok(())
 }

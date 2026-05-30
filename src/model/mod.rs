@@ -39,6 +39,17 @@ wire_struct! {
         pub category_name: Option<String>,
         pub status: String,
         pub published_at: Option<String>,
+        /// Responsive `srcset` for the featured image's WebP/AVIF renditions,
+        /// filled server-side from `media_variants` when the image is a local
+        /// upload (see `db::media::attach_card_variants`). Not SQL columns
+        /// (`sqlx(skip)`); `None`/empty for external URLs or un-processed uploads,
+        /// where the plain `featured_image_url` is used as-is.
+        #[cfg_attr(feature = "server", sqlx(skip))]
+        #[serde(default)]
+        pub featured_srcset_webp: Option<String>,
+        #[cfg_attr(feature = "server", sqlx(skip))]
+        #[serde(default)]
+        pub featured_srcset_avif: Option<String>,
     }
 }
 
@@ -68,6 +79,14 @@ wire_struct! {
         #[cfg_attr(feature = "server", sqlx(skip))]
         #[serde(default)]
         pub body_segments: Vec<crate::mdx::Segment>,
+        /// Responsive `srcset` for the featured image — see [`PostCard`]'s fields
+        /// of the same name. Filled server-side in `get_post`; empty otherwise.
+        #[cfg_attr(feature = "server", sqlx(skip))]
+        #[serde(default)]
+        pub featured_srcset_webp: Option<String>,
+        #[cfg_attr(feature = "server", sqlx(skip))]
+        #[serde(default)]
+        pub featured_srcset_avif: Option<String>,
     }
 }
 
@@ -190,6 +209,24 @@ wire_struct! {
         pub url: String,
         pub uploaded_by: i64,
         pub created_at: String,
+        /// How many posts reference this image (as a featured/cover image or
+        /// inline in the body). Derived server-side in `list_media` (not a SQL
+        /// column); drives the "Used in N posts" label and the delete guard.
+        #[cfg_attr(feature = "server", sqlx(skip))]
+        #[serde(default)]
+        pub usage_count: i64,
+    }
+}
+
+wire_struct! {
+    /// A post that references a given media item, for the media library's usage
+    /// panel / delete confirmation. `kind` is "cover" or "body".
+    pub struct PostUsage {
+        pub id: i64,
+        pub title: String,
+        pub slug: String,
+        pub status: String,
+        pub kind: String,
     }
 }
 

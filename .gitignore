@@ -13,6 +13,15 @@
 # Local env
 .env
 
+# Personal, untracked just recipes (optionally imported by the justfile)
+local.just
+
+# Shipped image artifact produced by the deploy recipes (docker save | gzip)
+/dx-blog.tar.gz
+
+# Per-host compose deltas (proxy network, etc.) live only on the server.
+docker-compose.override.yml
+
 # Local planning notes
 TODO.md
 TODO*.md

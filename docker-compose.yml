@@ -1,0 +1,56 @@
+# Run dx-blog in a container. Build the image and start it with:
+#
+#   DOCKER_BUILDKIT=1 docker compose up --build
+#
+# The app is served at http://localhost:8888.
+services:
+  blog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # The container runs as a non-root user pinned to UID/GID 1000 (the usual
+      # desktop default), so files on the bind mounts below are host-owned. If
+      # your host UID differs, override: UID=$(id -u) GID=$(id -g) docker compose build
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    image: dx-blog
+    ports:
+      - "8888:8888"
+    volumes:
+      # SQLite database (data mount point) — survives container rebuilds.
+      - ./data:/app/data
+      # Uploaded media from the admin media library, served at /uploads.
+      - ./uploads:/app/uploads
+    environment:
+      # Absolute path matching the data volume above; mode=rwc creates the file.
+      DATABASE_URL: sqlite:///app/data/blog.db?mode=rwc
+      # Canonical origin for absolute URLs in /sitemap.xml and /feed.xml.
+      # Pass-through: set to your real public https origin behind the proxy, e.g.
+      #   SITE_URL=https://blog.example.com docker compose up -d
+      # Defaults to the local published port when unset.
+      SITE_URL: ${SITE_URL:-http://localhost:8888}
+      # --- First-run convenience (comment out for a real deployment) ---------
+      # Seed demo content + accounts on an empty DB (admin@/ada@/linus@).
+      # Passed through from the host shell, so you can run a one-off:
+      #   DX_SEED=1 docker compose up --build
+      # Unset -> empty -> off (the app only seeds when DX_SEED == "1").
+      DX_SEED: ${DX_SEED:-}
+      # Password for the seeded admin@example.com account. Unset -> a random one
+      # is generated and printed once to the logs at seed time. Pin it for a
+      # known login: DX_SEED=1 DX_SEED_ADMIN_PASSWORD=secret docker compose up
+      DX_SEED_ADMIN_PASSWORD: ${DX_SEED_ADMIN_PASSWORD:-}
+      # First account to register with this email becomes admin.
+      DX_AUTH_BOOTSTRAP_ADMIN_EMAIL: ${DX_AUTH_BOOTSTRAP_ADMIN_EMAIL:-}
+      # DEV/no-SMTP only: auto-confirm signups (skips the verification email).
+      # Unset -> off. Leave off once a mailer is configured.
+      DX_AUTH_SKIP_EMAIL_VERIFICATION: ${DX_AUTH_SKIP_EMAIL_VERIFICATION:-}
+      # --- Optional integrations --------------------------------------------
+      # SMTP_HOST:
+      # SMTP_PORT: "587"
+      # SMTP_USERNAME:
+      # SMTP_PASSWORD:
+      # MAIL_FROM_ADDRESS: blog@example.com
+      # GITHUB_CLIENT_ID:
+      # GITHUB_CLIENT_SECRET:
+    restart: unless-stopped

@@ -1,0 +1,19 @@
+# Keep the build context small and the build hermetic. The builder regenerates
+# everything below from source (target/, assets/tailwind.css), and the DB/media
+# are runtime volumes — none of it belongs in the image.
+/target
+/data
+/uploads
+/emails
+.git
+.env
+*.rs.bk
+.DS_Store
+
+# Local-only notes and docs — not needed to build.
+TODO*.md
+NOTES.md
+/docs
+
+# Generated Tailwind output — the builder recompiles it from ./tailwind.css.
+assets/tailwind.css

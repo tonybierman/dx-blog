@@ -706,7 +706,7 @@ fn FacetMenu(
             label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "{label}" }
             DropdownMenu { class: "block w-full",
                 DropdownMenuTrigger {
-                    class: "flex w-full items-center justify-between gap-2 rounded border border-white/15 bg-transparent px-2 py-1.5 text-left",
+                    class: "flex w-full items-center justify-between gap-2 text-left",
                     span { "{current}" }
                     span { class: "text-white/40", "▾" }
                 }

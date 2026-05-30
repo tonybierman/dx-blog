@@ -138,20 +138,26 @@ pub fn HolyGrailLayout(
     #[props(optional)] right: Option<Element>,
     children: Element,
 ) -> Element {
+    // Only reserve a sidebar track when that slot is actually filled, so a page
+    // using one sidebar (e.g. search → right only) lets the main column claim
+    // the freed space instead of leaving a dead gutter.
+    let cols = match (left.is_some(), right.is_some()) {
+        (true, true) => "md:grid-cols-[200px_1fr_240px]",
+        (true, false) => "md:grid-cols-[200px_1fr]",
+        (false, true) => "md:grid-cols-[1fr_240px]",
+        (false, false) => "md:grid-cols-[1fr]",
+    };
     rsx! {
         div { class: "flex min-h-screen flex-col",
             SiteHeader {}
-            div { class: "mx-auto grid w-full max-w-6xl flex-1 gap-6 px-4 py-6 md:grid-cols-[200px_1fr_240px]",
+            div {
+                class: "mx-auto grid w-full max-w-6xl flex-1 gap-6 px-4 py-6 {cols}",
                 if let Some(left) = left {
                     aside { class: "hidden md:block", {left} }
-                } else {
-                    aside { class: "hidden md:block" }
                 }
                 main { class: "min-w-0", {children} }
                 if let Some(right) = right {
                     aside { class: "hidden md:block", {right} }
-                } else {
-                    aside { class: "hidden md:block" }
                 }
             }
             SiteFooter {}

@@ -11,6 +11,7 @@ use dioxus::prelude::*;
 use arium_dioxus::server::logout;
 use arium_dioxus::ui::use_permissions;
 
+use crate::components::navbar::{Navbar, NavbarContent, NavbarItem, NavbarNav, NavbarTrigger};
 use crate::model::SiteMeta;
 use crate::server::settings::DEFAULT_SITE_TITLE;
 use crate::Route;
@@ -54,35 +55,59 @@ pub fn SiteHeader() -> Element {
 
     rsx! {
         header { class: "w-full border-b border-white/10 bg-black/20 backdrop-blur",
-            nav { class: "mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3",
+            div { class: "mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3",
                 Link { to: Route::HomePage, class: "flex items-baseline gap-2",
                     span { class: "text-lg font-semibold tracking-tight", "{title}" }
                     if let Some(tagline) = tagline {
                         span { class: "hidden text-sm text-white/40 sm:inline", "{tagline}" }
                     }
                 }
-                div { class: "flex items-center gap-4 text-sm",
-                    Link { to: Route::HomePage, class: "hover:underline", "Home" }
-                    Link { to: Route::Archive, class: "hover:underline", "Archive" }
-                    Link { to: Route::SearchResults { q: String::new() }, class: "hover:underline", "Search" }
+                // Catalog menubar: flat top-level links plus a dropdown for the
+                // signed-in account actions (keyboard-navigable, themed via the
+                // dx-components tokens).
+                Navbar { aria_label: "Primary",
+                    NavbarItem { index: 0usize, value: "home".to_string(), to: Route::HomePage, "Home" }
+                    NavbarItem { index: 1usize, value: "archive".to_string(), to: Route::Archive, "Archive" }
+                    NavbarItem {
+                        index: 2usize,
+                        value: "search".to_string(),
+                        to: Route::SearchResults { q: String::new() },
+                        "Search"
+                    }
                     if authed {
                         if let Some(route) = admin_route.clone() {
-                            Link { to: route, class: "hover:underline", "Admin" }
+                            NavbarItem { index: 3usize, value: "admin".to_string(), to: route, "Admin" }
                         }
-                        Link { to: Route::AccountPage, class: "hover:underline", "{name}" }
-                        button {
-                            class: "rounded border border-white/15 px-2 py-1 hover:bg-white/5",
-                            onclick: move |_| {
-                                spawn(async move {
-                                    let _ = logout().await;
-                                    perms.refresh();
-                                    navigator().push(Route::HomePage);
-                                });
-                            },
-                            "Sign out"
+                        NavbarNav { index: 4usize,
+                            NavbarTrigger { "{name}" }
+                            NavbarContent {
+                                NavbarItem {
+                                    index: 0usize,
+                                    value: "account".to_string(),
+                                    to: Route::AccountPage,
+                                    "Account"
+                                }
+                                NavbarItem {
+                                    index: 1usize,
+                                    value: "signout".to_string(),
+                                    to: Route::HomePage,
+                                    onclick: move |_| {
+                                        spawn(async move {
+                                            let _ = logout().await;
+                                            perms.refresh();
+                                        });
+                                    },
+                                    "Sign out"
+                                }
+                            }
                         }
                     } else {
-                        Link { to: Route::LoginPage, class: "hover:underline", "Sign in" }
+                        NavbarItem {
+                            index: 3usize,
+                            value: "signin".to_string(),
+                            to: Route::LoginPage,
+                            "Sign in"
+                        }
                     }
                 }
             }

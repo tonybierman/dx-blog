@@ -90,7 +90,7 @@ pub fn AdminPostList() -> Element {
                                     tr { key: "{p.id}", class: "border-b border-white/5",
                                         td { class: "py-2", "{p.title}" }
                                         td { span { class: "rounded-full border border-white/15 px-2 py-0.5 text-xs", "{p.status}" } }
-                                        td { class: "text-white/50", {p.published_at.clone().unwrap_or_else(|| "—".into())} }
+                                        td { class: "text-white/50", {p.published_at.as_deref().map(crate::model::fmt_date).unwrap_or_else(|| "—".into())} }
                                         td { class: "flex gap-3 py-2",
                                             Link { to: Route::AdminPostEdit { id: p.id }, class: "text-brand-400 hover:underline", "Edit" }
                                             {

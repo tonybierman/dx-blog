@@ -36,6 +36,7 @@ wire_struct! {
         pub featured_image_url: Option<String>,
         pub author_id: i64,
         pub author_name: String,
+        pub author_username: String,
         pub category_name: Option<String>,
         pub status: String,
         pub published_at: Option<String>,
@@ -331,6 +332,27 @@ pub fn to_rfc3339(dt: &str) -> String {
         return t.to_string();
     }
     format!("{}Z", t.replacen(' ', "T", 1))
+}
+
+/// Trim a stored SQLite datetime (`YYYY-MM-DD HH:MM:SS`) down to just the date
+/// (`YYYY-MM-DD`) for display in the UI. Accepts either a space- or `T`-separated
+/// time component. Anything that doesn't start with a `YYYY-MM-DD` date (e.g. an
+/// optimistic "just now" placeholder) passes through unchanged.
+pub fn fmt_date(dt: &str) -> String {
+    let t = dt.trim();
+    let looks_like_date = t.len() >= 10
+        && t.as_bytes()[..10].iter().enumerate().all(|(i, &b)| {
+            if i == 4 || i == 7 {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        });
+    if looks_like_date {
+        t[..10].to_string()
+    } else {
+        t.to_string()
+    }
 }
 
 /// The post lifecycle statuses. Single source of truth for the server-side

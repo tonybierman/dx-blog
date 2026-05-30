@@ -7,6 +7,10 @@ use arium_dioxus::ui::{use_permissions, ResourceGate};
 use arium_dioxus::ResourceRole;
 use dioxus_sdk_time::use_interval;
 
+use crate::components::avatar::{Avatar, AvatarFallback, AvatarImage, AvatarImageSize};
+use crate::components::dropdown_menu::{
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+};
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
 use crate::live::{use_live, LiveHandle};
 use crate::model::CommentView;
@@ -193,7 +197,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                     class: "hover:underline",
                     "{post.author_name}"
                 }
-                if let Some(when) = post.published_at.clone() {
+                if let Some(when) = post.published_at.as_deref().map(crate::model::fmt_date) {
                     span { "· {when}" }
                 }
                 PresenceBadge { live }
@@ -219,7 +223,14 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
             // Author bio
             if let Some(bio) = post.author_bio.clone() {
                 div { class: "mt-10 rounded-xl border border-white/10 bg-white/[0.03] p-4",
-                    h3 { class: "font-semibold", "About {post.author_name}" }
+                    h3 { class: "font-semibold",
+                        "About "
+                        Link {
+                            to: Route::AuthorProfile { slug: post.author_username.clone() },
+                            class: "hover:underline",
+                            "{post.author_name}"
+                        }
+                    }
                     p { class: "mt-1 text-sm text-white/60", "{bio}" }
                 }
             }
@@ -239,8 +250,8 @@ fn PresenceBadge(live: LiveHandle) -> Element {
     let n = (live.reading_now)();
     rsx! {
         if n >= 1 {
-            span { class: "inline-flex items-center gap-1 rounded-full bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-300",
-                span { class: "h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" }
+            span { class: "inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-xs text-brand-300",
+                span { class: "h-1.5 w-1.5 animate-pulse rounded-full bg-brand-400" }
                 "{n} reading now"
             }
         }
@@ -448,7 +459,7 @@ fn CommentSection(post_id: i64, live: LiveHandle) -> Element {
                                     span { class: "rounded bg-amber-400/10 px-1.5 text-xs text-amber-300", "awaiting approval" }
                                 }
                             }
-                            div { class: "text-xs text-white/40", "{c.created_at}" }
+                            div { class: "text-xs text-white/40", {crate::model::fmt_date(&c.created_at)} }
                             p { class: "mt-1 text-sm text-white/80", "{c.body}" }
                         }
                     }
@@ -583,6 +594,22 @@ pub fn TagFeed(slug: String) -> Element {
     }
 }
 
+/// Up-to-two uppercase initials from a display name, shown as the avatar
+/// fallback when an author has no image. Falls back to "?" for an empty name.
+fn author_initials(name: &str) -> String {
+    let initials: String = name
+        .split_whitespace()
+        .filter_map(|w| w.chars().next())
+        .take(2)
+        .collect::<String>()
+        .to_uppercase();
+    if initials.is_empty() {
+        "?".to_string()
+    } else {
+        initials
+    }
+}
+
 #[component]
 pub fn AuthorProfile(slug: String) -> Element {
     let profile = {
@@ -610,10 +637,16 @@ pub fn AuthorProfile(slug: String) -> Element {
     let sidebar = match &*profile.read() {
         Some(Ok(Some(p))) => {
             let p = p.clone();
+            let initials = author_initials(&p.display_name);
             rsx! {
                 div {
-                    if let Some(av) = p.avatar_url.clone() {
-                        img { class: "mb-3 h-20 w-20 rounded-full object-cover", src: "{av}" }
+                    Avatar {
+                        size: AvatarImageSize::Large,
+                        class: "mb-3",
+                        if let Some(av) = p.avatar_url.clone() {
+                            AvatarImage { src: "{av}", alt: "{p.display_name}" }
+                        }
+                        AvatarFallback { "{initials}" }
                     }
                     h2 { class: "text-lg font-semibold", "{p.display_name}" }
                     p { class: "text-sm text-white/40", "@{p.username}" }
@@ -643,6 +676,51 @@ pub fn Archive() -> Element {
         MasonryLayout {
             h1 { class: "mb-6 text-2xl font-bold", "Archive" }
             FeedSection { posts, shape: FeedShape::Masonry, page }
+        }
+    }
+}
+
+/// A single search refinement: a labelled catalog `DropdownMenu` whose trigger
+/// shows the current selection and whose items each carry a `(value, display)`
+/// pair. `value` is the empty string for the "any" option. Selecting an item
+/// fires `on_select` with that value.
+#[component]
+fn FacetMenu(
+    label: &'static str,
+    selected: String,
+    options: Vec<(String, String)>,
+    on_select: EventHandler<String>,
+) -> Element {
+    // Trigger text reflects the current selection (falls back to the first
+    // option's label, which is the "any" choice).
+    let current = options
+        .iter()
+        .find(|(v, _)| v == &selected)
+        .or_else(|| options.first())
+        .map(|(_, disp)| disp.clone())
+        .unwrap_or_default();
+
+    rsx! {
+        div {
+            label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "{label}" }
+            DropdownMenu { class: "block w-full",
+                DropdownMenuTrigger {
+                    class: "flex w-full items-center justify-between gap-2 rounded border border-white/15 bg-transparent px-2 py-1.5 text-left",
+                    span { "{current}" }
+                    span { class: "text-white/40", "▾" }
+                }
+                DropdownMenuContent {
+                    for (i, (value, disp)) in options.into_iter().enumerate() {
+                        DropdownMenuItem {
+                            key: "{value}",
+                            index: i,
+                            value: value.clone(),
+                            on_select: move |v: String| on_select.call(v),
+                            "{disp}"
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -684,44 +762,42 @@ pub fn SearchResults(q: String) -> Element {
                 div { class: "space-y-5 text-sm",
                     h3 { class: "font-semibold text-white/80", "Refine" }
                     // Category facet
-                    div {
-                        label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "Category" }
-                        select {
-                            class: "w-full rounded border border-white/15 bg-transparent px-2 py-1.5",
-                            onchange: move |e| { category.set(e.value()); page.set(1); },
-                            option { value: "", selected: category().is_empty(), "All categories" }
+                    FacetMenu {
+                        label: "Category",
+                        selected: category(),
+                        options: {
+                            let mut opts = vec![(String::new(), "All categories".to_string())];
                             if let Some(Ok(list)) = &*cats.read() {
-                                for c in list.clone() {
-                                    option { value: "{c.slug}", selected: category() == c.slug, "{c.name}" }
-                                }
+                                opts.extend(list.iter().map(|c| (c.slug.clone(), c.name.clone())));
                             }
-                        }
+                            opts
+                        },
+                        on_select: move |v: String| { category.set(v); page.set(1); },
                     }
                     // Tag facet
-                    div {
-                        label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "Tag" }
-                        select {
-                            class: "w-full rounded border border-white/15 bg-transparent px-2 py-1.5",
-                            onchange: move |e| { tag.set(e.value()); page.set(1); },
-                            option { value: "", selected: tag().is_empty(), "All tags" }
+                    FacetMenu {
+                        label: "Tag",
+                        selected: tag(),
+                        options: {
+                            let mut opts = vec![(String::new(), "All tags".to_string())];
                             if let Some(Ok(list)) = &*tags.read() {
-                                for t in list.clone() {
-                                    option { value: "{t.slug}", selected: tag() == t.slug, "#{t.name}" }
-                                }
+                                opts.extend(list.iter().map(|t| (t.slug.clone(), format!("#{}", t.name))));
                             }
-                        }
+                            opts
+                        },
+                        on_select: move |v: String| { tag.set(v); page.set(1); },
                     }
                     // Date facet
-                    div {
-                        label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "Published" }
-                        select {
-                            class: "w-full rounded border border-white/15 bg-transparent px-2 py-1.5",
-                            onchange: move |e| { date_range.set(e.value()); page.set(1); },
-                            option { value: "", selected: date_range().is_empty(), "Any time" }
-                            option { value: "week", selected: date_range() == "week", "Past week" }
-                            option { value: "month", selected: date_range() == "month", "Past month" }
-                            option { value: "year", selected: date_range() == "year", "Past year" }
-                        }
+                    FacetMenu {
+                        label: "Published",
+                        selected: date_range(),
+                        options: vec![
+                            (String::new(), "Any time".to_string()),
+                            ("week".to_string(), "Past week".to_string()),
+                            ("month".to_string(), "Past month".to_string()),
+                            ("year".to_string(), "Past year".to_string()),
+                        ],
+                        on_select: move |v: String| { date_range.set(v); page.set(1); },
                     }
                     if !category().is_empty() || !tag().is_empty() || !date_range().is_empty() {
                         button {

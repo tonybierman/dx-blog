@@ -102,6 +102,8 @@ gloo-net = { version = "0.6", default-features = false, optional = true, feature
 # the *same* one gloo-net's subscription implements — going through the `futures`
 # facade resolves `Stream` to a different path and the bound fails to match.
 futures-util = { version = "0.3", default-features = false, optional = true }
+dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false, features = ["router"] }
+dioxus-icons = { version = "0.1.0", default-features = false }
 
 [features]
 default = ["web", "server", "sqlite"]

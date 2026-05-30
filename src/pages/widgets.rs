@@ -275,6 +275,7 @@ pub fn PostCardView(card: PostCard, #[props(default)] fill: bool) -> Element {
         featured_srcset_webp,
         featured_srcset_avif,
         author_name,
+        author_username,
         category_name,
         published_at,
         ..
@@ -303,8 +304,12 @@ pub fn PostCardView(card: PostCard, #[props(default)] fill: bool) -> Element {
                 }
                 p { class: "mt-2 line-clamp-3 text-sm text-white/60", "{excerpt}" }
                 div { class: "mt-3 flex items-center gap-2 text-xs text-white/40",
-                    span { "{author_name}" }
-                    if let Some(when) = published_at {
+                    Link {
+                        to: Route::AuthorProfile { slug: author_username.clone() },
+                        class: "hover:underline",
+                        "{author_name}"
+                    }
+                    if let Some(when) = published_at.as_deref().map(crate::model::fmt_date) {
                         span { "·" }
                         span { "{when}" }
                     }

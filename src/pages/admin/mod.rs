@@ -12,9 +12,12 @@ use dioxus::prelude::*;
 use std::future::Future;
 use std::pin::Pin;
 
-use arium_dioxus::ui::{Policy, RequirePermission};
+use arium_dioxus::ui::{PermissionGate, Policy, RequirePermission};
 
-use crate::auth_tokens::ADMIN_NAV_TOKENS;
+use crate::auth_tokens::{
+    ADMIN_NAV_TOKENS, ANALYTICS_READ, COMMENTS_MODERATE, MEDIA_UPLOAD, POSTS_WRITE, SETTINGS_WRITE,
+    USERS_MANAGE,
+};
 use crate::Route;
 
 mod appearance;
@@ -39,6 +42,25 @@ fn admin_any_policy() -> Policy {
     Policy::any_of(ADMIN_NAV_TOKENS)
 }
 
+/// The admin section a user should land on: the first sidebar entry whose
+/// gating token they hold, in nav order. Returns `None` when they hold no admin
+/// token at all. Keeps the "where does Admin go" decision in one place so the
+/// header link and the sidebar gates can't drift — a user is never sent to a
+/// section that would greet them with a permission error.
+pub(crate) fn admin_landing(has: impl Fn(&str) -> bool) -> Option<Route> {
+    [
+        (ANALYTICS_READ, Route::AdminDashboard),
+        (POSTS_WRITE, Route::AdminPostList),
+        (MEDIA_UPLOAD, Route::AdminMedia),
+        (COMMENTS_MODERATE, Route::AdminComments),
+        (USERS_MANAGE, Route::AdminUsers),
+        (SETTINGS_WRITE, Route::AdminSettings),
+    ]
+    .into_iter()
+    .find(|(token, _)| has(token))
+    .map(|(_, route)| route)
+}
+
 fn nav_class(active: &str, name: &str) -> &'static str {
     if active == name {
         "rounded bg-white/10 px-3 py-1.5 font-medium"
@@ -60,16 +82,38 @@ pub(crate) fn AdminShell(active: String, children: Element) -> Element {
                 aside { class: "w-56 shrink-0 border-r border-white/10 bg-black/20 p-4",
                     h2 { class: "mb-4 text-lg font-bold", "Admin" }
                     nav { class: "flex flex-col gap-1 text-sm",
-                        Link { to: Route::AdminDashboard, class: nav_class(&active, "dashboard"), "Dashboard" }
-                        Link { to: Route::AdminPostList, class: nav_class(&active, "posts"), "Posts" }
-                        Link { to: Route::AdminPostNew, class: nav_class(&active, "new"), "New post" }
-                        Link { to: Route::AdminMedia, class: nav_class(&active, "media"), "Media" }
-                        Link { to: Route::AdminComments, class: nav_class(&active, "comments"), "Comments" }
-                        Link { to: Route::AdminUsers, class: nav_class(&active, "users"), "Users" }
-                        Link { to: Route::AdminSettings, class: nav_class(&active, "settings"), "Settings" }
-                        Link { to: Route::AdminAppearance, class: nav_class(&active, "appearance"), "Appearance" }
-                        Link { to: Route::AdminTaxonomy, class: nav_class(&active, "taxonomy"), "Taxonomy" }
-                        Link { to: Route::AdminAnalytics, class: nav_class(&active, "analytics"), "Analytics" }
+                        // Each link is gated by the exact token its page's server fns
+                        // require, so users only see sections they can actually open.
+                        PermissionGate { token: ANALYTICS_READ.to_string(),
+                            Link { to: Route::AdminDashboard, class: nav_class(&active, "dashboard"), "Dashboard" }
+                        }
+                        PermissionGate { token: POSTS_WRITE.to_string(),
+                            Link { to: Route::AdminPostList, class: nav_class(&active, "posts"), "Posts" }
+                        }
+                        PermissionGate { token: POSTS_WRITE.to_string(),
+                            Link { to: Route::AdminPostNew, class: nav_class(&active, "new"), "New post" }
+                        }
+                        PermissionGate { token: MEDIA_UPLOAD.to_string(),
+                            Link { to: Route::AdminMedia, class: nav_class(&active, "media"), "Media" }
+                        }
+                        PermissionGate { token: COMMENTS_MODERATE.to_string(),
+                            Link { to: Route::AdminComments, class: nav_class(&active, "comments"), "Comments" }
+                        }
+                        PermissionGate { token: USERS_MANAGE.to_string(),
+                            Link { to: Route::AdminUsers, class: nav_class(&active, "users"), "Users" }
+                        }
+                        PermissionGate { token: SETTINGS_WRITE.to_string(),
+                            Link { to: Route::AdminSettings, class: nav_class(&active, "settings"), "Settings" }
+                        }
+                        PermissionGate { token: SETTINGS_WRITE.to_string(),
+                            Link { to: Route::AdminAppearance, class: nav_class(&active, "appearance"), "Appearance" }
+                        }
+                        PermissionGate { token: SETTINGS_WRITE.to_string(),
+                            Link { to: Route::AdminTaxonomy, class: nav_class(&active, "taxonomy"), "Taxonomy" }
+                        }
+                        PermissionGate { token: ANALYTICS_READ.to_string(),
+                            Link { to: Route::AdminAnalytics, class: nav_class(&active, "analytics"), "Analytics" }
+                        }
                     }
                     Link { to: Route::HomePage, class: "mt-6 block text-xs text-white/40 hover:underline", "← Back to site" }
                 }

@@ -97,6 +97,48 @@ fn render_markdown_drops_onclick_attributes() {
     );
 }
 
+#[test]
+fn highlighted_code_emits_classed_spans() {
+    use crate::server::highlight::render_markdown_highlighted;
+    let html = render_markdown_highlighted("```rust\nfn main() {}\n```");
+    // Syntect emitted prefixed token classes...
+    assert!(
+        html.contains("class=\"syn-"),
+        "code should be highlighted with syn- classes: {html}"
+    );
+    // ...and ammonia kept the class attribute instead of sanitizing it away.
+    assert!(html.contains("<pre"), "code block should survive: {html}");
+    assert!(
+        html.contains("class=\"language-rust\""),
+        "language class should be present: {html}"
+    );
+    // The language label is driven by data-lang on <pre>.
+    assert!(
+        html.contains("data-lang=\"rust\""),
+        "language label attribute should be present: {html}"
+    );
+}
+
+#[test]
+fn unlabeled_code_block_has_no_lang_attribute() {
+    use crate::server::highlight::render_markdown_highlighted;
+    // A fence with no language gets no label (and falls back to plain text).
+    let html = render_markdown_highlighted("```\nplain text\n```");
+    assert!(html.contains("<pre"), "code block should render: {html}");
+    assert!(
+        !html.contains("data-lang"),
+        "no language → no label: {html}"
+    );
+}
+
+#[test]
+fn highlighted_prose_matches_plain_pipeline() {
+    use crate::server::highlight::render_markdown_highlighted;
+    // Non-code markdown must render identically to the shared plain pipeline.
+    let md = "# Title\n\nSome **bold** text.";
+    assert_eq!(render_markdown(md), render_markdown_highlighted(md));
+}
+
 // ---------------------------------------------------------------- mdx / embeds
 
 use crate::mdx::{parse_body, Segment};

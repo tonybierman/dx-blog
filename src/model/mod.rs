@@ -61,6 +61,13 @@ wire_struct! {
         pub status: String,
         pub published_at: Option<String>,
         pub created_at: String,
+        /// The body pre-rendered into highlighted HTML runs + embed blocks,
+        /// filled server-side in `get_post` so the reader displays it without
+        /// re-running the markdown/highlight pipeline on the client. Not a SQL
+        /// column (`sqlx(skip)` → `Default`) and empty in every other context.
+        #[cfg_attr(feature = "server", sqlx(skip))]
+        #[serde(default)]
+        pub body_segments: Vec<crate::mdx::Segment>,
     }
 }
 

@@ -57,6 +57,12 @@ anyhow = { version = "1.0.98", optional = true }
 tower-http = { version = "0.6", optional = true, features = ["fs"] }        # static /uploads
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"], optional = true }  # markdown render
 ammonia = { version = "4", optional = true }                                # HTML sanitize
+# Server-only syntax highlighting for fenced code blocks. `default-fancy` swaps
+# the C `onig` engine for pure-Rust `fancy-regex` (no C toolchain needed) — it's
+# only invoked server-side at render time, so the speed difference is irrelevant.
+# Deliberately NOT in the `web` feature: highlighting runs on the server and the
+# result is shipped to the client as data, so syntect never bloats the wasm bundle.
+syntect = { version = "5", default-features = false, features = ["default-fancy"], optional = true }
 slug = { version = "0.1", optional = true }                                 # slug generation
 base64 = { version = "0.22", optional = true }                             # media upload decode
 
@@ -100,6 +106,7 @@ server = [
     "dep:tower-http",
     "dep:pulldown-cmark",
     "dep:ammonia",
+    "dep:syntect",
     "dep:slug",
     "dep:base64",
     "dep:tokio",

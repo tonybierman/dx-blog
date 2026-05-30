@@ -186,17 +186,19 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                 }
                 PresenceBadge { live }
             }
-            // "Rust MDX": split the body into rendered-markdown runs and live
-            // embed blocks, mounting each embed as a real interactive component
-            // interleaved with the prose (see `crate::mdx`).
+            // "Rust MDX": rendered-markdown runs interleaved with live embed
+            // blocks. The runs are pre-rendered server-side (with syntax-
+            // highlighted code) and shipped in `body_segments` via the
+            // `use_server_future` above, so the client never re-runs the markdown
+            // or syntect — it just mounts each embed as a real component.
             div { class: "prose mt-8 max-w-none",
-                for (i, seg) in crate::mdx::parse_body(&post.body_md).into_iter().enumerate() {
+                for (i, seg) in post.body_segments.iter().enumerate() {
                     match seg {
                         crate::mdx::Segment::Html(html) => rsx! {
                             div { key: "{i}", dangerous_inner_html: "{html}" }
                         },
                         crate::mdx::Segment::Embed { name, props } => rsx! {
-                            crate::embeds::EmbedBlock { key: "{i}", name, props }
+                            crate::embeds::EmbedBlock { key: "{i}", name: name.clone(), props: props.clone() }
                         },
                     }
                 }

@@ -8,6 +8,11 @@
 use dioxus::prelude::*;
 
 #[cfg(feature = "server")]
+use crate::db::reactions::{
+    insert_reaction_db, post_is_published_db, reaction_burst_count_db, reaction_total_db,
+    reaction_visitor_total_db,
+};
+#[cfg(feature = "server")]
 use crate::server::{live::HubExtension, sfe, DbExtension};
 
 /// Reaction kinds the server will store. Bounding this keeps `kind` from being a
@@ -41,65 +46,35 @@ pub async fn add_reaction(post_id: i64, kind: String) -> Result<()> {
         return Err(ServerFnError::new("Unknown reaction.").into());
     }
 
-    // Only react to a real, published post.
-    let post_ok: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM posts WHERE id = ? AND status = 'published')",
-    )
-    .bind(post_id)
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
-    if !post_ok {
+    if !post_is_published_db(&db.0, post_id).await.map_err(sfe)? {
         return Err(ServerFnError::new("Post not found.").into());
     }
 
     let visitor = crate::server::analytics::visitor_hash(&headers);
 
-    // Lifetime cap per visitor per post.
-    let total: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM reactions WHERE post_id = ? AND visitor_hash = ?")
-            .bind(post_id)
-            .bind(&visitor)
-            .fetch_one(&db.0)
-            .await
-            .map_err(sfe)?;
+    let total = reaction_visitor_total_db(&db.0, post_id, &visitor)
+        .await
+        .map_err(sfe)?;
     if total >= MAX_PER_VISITOR {
         // Already a generous number of claps from this visitor — quietly succeed
         // so the UI doesn't surface an error for an over-eager reader.
         return Ok(());
     }
 
-    // Short burst window guard against a held-down / scripted button.
-    let burst: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM reactions \
-         WHERE post_id = ? AND visitor_hash = ? AND created_at >= datetime('now', ?)",
-    )
-    .bind(post_id)
-    .bind(&visitor)
-    .bind(BURST_WINDOW)
-    .fetch_one(&db.0)
-    .await
-    .map_err(sfe)?;
+    let burst = reaction_burst_count_db(&db.0, post_id, &visitor, BURST_WINDOW)
+        .await
+        .map_err(sfe)?;
     if burst >= BURST_MAX {
         return Err(ServerFnError::new("You're clapping too fast — give it a sec.").into());
     }
 
-    sqlx::query("INSERT INTO reactions (post_id, kind, visitor_hash) VALUES (?, ?, ?)")
-        .bind(post_id)
-        .bind(&kind)
-        .bind(&visitor)
-        .execute(&db.0)
+    insert_reaction_db(&db.0, post_id, &kind, &visitor)
         .await
         .map_err(sfe)?;
 
     // Broadcast the authoritative post-insert total so every client shows the
     // same number rather than tracking its own increments.
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM reactions WHERE post_id = ?")
-        .bind(post_id)
-        .fetch_one(&db.0)
-        .await
-        .map_err(sfe)?;
-
+    let total = reaction_total_db(&db.0, post_id).await.map_err(sfe)?;
     hub.publish(post_id, crate::model::LiveEvent::Reaction { kind, total });
     Ok(())
 }
@@ -108,10 +83,5 @@ pub async fn add_reaction(post_id: i64, kind: String) -> Result<()> {
 /// starts from before SSE increments take over. Public.
 #[post("/api/reactions/total", db: DbExtension)]
 pub async fn reaction_total(post_id: i64) -> Result<i64> {
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM reactions WHERE post_id = ?")
-        .bind(post_id)
-        .fetch_one(&db.0)
-        .await
-        .map_err(sfe)?;
-    Ok(total)
+    Ok(reaction_total_db(&db.0, post_id).await.map_err(sfe)?)
 }

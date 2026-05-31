@@ -13,6 +13,7 @@ use arium_dioxus::ui::use_permissions;
 
 use crate::components::breadcrumb::Breadcrumb;
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::input::Input;
 use crate::components::navbar::{Navbar, NavbarContent, NavbarItem, NavbarNav, NavbarTrigger};
 use crate::model::SiteMeta;
 use crate::server::settings::DEFAULT_SITE_TITLE;
@@ -39,6 +40,9 @@ pub fn SiteHeader() -> Element {
         .profile()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
+
+    let mut search_q = use_signal(String::new);
+    let nav = use_navigator();
 
     // Admin-configurable branding (see AdminSettings), shared via context with
     // SiteFooter. Falls back to the compiled-in default until the meta resolves.
@@ -68,11 +72,18 @@ pub fn SiteHeader() -> Element {
                 // signed-in account actions (keyboard-navigable, themed via the
                 // dx-components tokens).
                 Navbar { aria_label: "Primary",
-                    NavbarItem {
-                        index: 0usize,
-                        value: "search".to_string(),
-                        to: Route::SearchResults { q: String::new() },
-                        "Search"
+                    form {
+                        class: "flex items-center gap-1",
+                        onsubmit: move |_| {
+                            nav.push(Route::SearchResults { q: search_q() });
+                        },
+                        Input {
+                            r#type: "search",
+                            placeholder: "Search…",
+                            value: "{search_q}",
+                            oninput: move |e: FormEvent| search_q.set(e.value()),
+                            class: "h-7 w-36 py-0 text-sm",
+                        }
                     }
                     if authed {
                         NavbarNav { index: 1usize,

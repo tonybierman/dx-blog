@@ -40,6 +40,7 @@ pub fn AdminComments() -> Element {
                                             rsx! {
                                                 ActionButton {
                                                     label: "Approve".to_string(),
+                                                    variant: ButtonVariant::Primary,
                                                     on_done: move |_| comments.restart(),
                                                     action: move |_| Box::pin(async move { moderate_comment(cid, "approved".to_string()).await }) as ActionFuture,
                                                 }

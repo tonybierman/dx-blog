@@ -188,7 +188,7 @@ mod gen {
             font-size: 0.72em;\n  \
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n  \
             color: #8a94a3;\n  background: #1f242d;\n  \
-            border-bottom-left-radius: 6px;\n  \
+            border-bottom-left-radius: 0.5rem;\n  \
             text-transform: lowercase;\n  letter-spacing: 0.04em;\n  \
             pointer-events: none;\n}\n";
         std::fs::write(path, format!("{header}{}{pre}", theme_css())).unwrap();

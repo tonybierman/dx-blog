@@ -66,9 +66,9 @@ pub(crate) fn admin_landing(has: impl Fn(&str) -> bool) -> Option<Route> {
 
 fn nav_class(active: &str, name: &str) -> &'static str {
     if active == name {
-        "rounded bg-white/10 px-3 py-1.5 font-medium"
+        "rounded-lg bg-white/10 px-3 py-1.5 font-medium"
     } else {
-        "rounded px-3 py-1.5 text-white/60 hover:bg-white/5 hover:text-white"
+        "rounded-lg px-3 py-1.5 text-white/60 hover:bg-white/5 hover:text-white"
     }
 }
 
@@ -138,7 +138,7 @@ pub(crate) type ActionFuture = Pin<Box<dyn Future<Output = Result<()>>>>;
 #[component]
 pub(crate) fn ActionButton(
     label: String,
-    #[props(default = ButtonVariant::Link)] variant: ButtonVariant,
+    #[props(default = ButtonVariant::Outline)] variant: ButtonVariant,
     on_done: EventHandler<()>,
     action: Callback<(), ActionFuture>,
 ) -> Element {

@@ -48,7 +48,12 @@ pub fn AdminPostList() -> Element {
         AdminShell { active: "posts".to_string(),
             div { class: "mb-6 flex items-center justify-between",
                 PageTitle { mb: Mb::None, "Posts" }
-                Link { to: Route::AdminPostNew, class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", "New post" }
+                Button {
+                    variant: ButtonVariant::Primary,
+                    size: ButtonSize::Sm,
+                    onclick: move |_| { navigator().push(Route::AdminPostNew); },
+                    "New post"
+                }
             }
             div { class: "mb-4 flex items-center gap-3 text-sm",
                 label { class: "text-white/50", "Status" }
@@ -98,10 +103,15 @@ pub fn AdminPostList() -> Element {
                                         td { Badge { tone: BadgeTone::Neutral, variant: BadgeVariant::Outlined, "{p.status}" } }
                                         td { class: "text-white/50", {p.published_at.as_deref().map(crate::model::fmt_date).unwrap_or_else(|| "—".into())} }
                                         td { class: "flex gap-3 py-2",
-                                            Link { to: Route::AdminPostEdit { id: p.id }, class: "text-brand-400 hover:underline", "Edit" }
                                             {
                                                 let pid = p.id;
                                                 rsx! {
+                                                    Button {
+                                                        variant: ButtonVariant::Outline,
+                                                        size: ButtonSize::Xs,
+                                                        onclick: move |_| { navigator().push(Route::AdminPostEdit { id: pid }); },
+                                                        "Edit"
+                                                    }
                                                     ActionButton {
                                                         label: "Delete".to_string(),
                                                         variant: ButtonVariant::Destructive,
@@ -222,13 +232,20 @@ fn EditorForm(initial: PostEditData) -> Element {
         let st = status();
         let tag_ids = selected_tags();
         let feat = if f.trim().is_empty() { None } else { Some(f) };
+        let input = crate::model::PostInput {
+            title: t,
+            body_md: b,
+            excerpt: ex,
+            category_id: cat,
+            tag_ids,
+            featured_image_url: feat,
+            status: st,
+        };
         spawn(async move {
             let result = if editing {
-                update_post(post_id, t, b, ex, cat, tag_ids, feat, st)
-                    .await
-                    .map(|_| post_id)
+                update_post(post_id, input).await.map(|_| post_id)
             } else {
-                create_post(t, b, ex, cat, tag_ids, feat, st).await
+                create_post(input).await
             };
             match result {
                 Ok(_) => {
@@ -279,10 +296,10 @@ fn EditorForm(initial: PostEditData) -> Element {
                         }
                     }
                     if !featured_preview().trim().is_empty() {
-                        img { class: "h-24 rounded border border-white/10 object-cover", src: "{featured_preview}", alt: "Featured preview" }
+                        img { class: "h-24 rounded-lg border border-white/10 object-cover", src: "{featured_preview}", alt: "Featured preview" }
                     }
                     if show_media_picker() {
-                        div { class: "rounded border border-white/10 bg-white/[0.03] p-2",
+                        div { class: "rounded-lg border border-white/10 bg-white/[0.03] p-2",
                             match &*media.read() {
                                 Some(Ok(list)) if !list.is_empty() => rsx! {
                                     div { class: "grid max-h-48 grid-cols-4 gap-2 overflow-y-auto sm:grid-cols-6",
@@ -293,7 +310,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                                                     button {
                                                         key: "{m.id}",
                                                         r#type: "button",
-                                                        class: "overflow-hidden rounded border border-white/10 hover:border-brand-400",
+                                                        class: "overflow-hidden rounded-lg border border-white/10 hover:border-brand-400",
                                                         title: "{m.filename}",
                                                         onclick: move |_| { featured.set(url.clone()); featured_preview.set(url.clone()); show_media_picker.set(false); },
                                                         img { class: "h-16 w-full object-cover", src: "{m.url}", alt: "{m.filename}" }
@@ -392,7 +409,7 @@ fn EditorForm(initial: PostEditData) -> Element {
             // Right: live preview
             div {
                 Eyebrow { r#as: EyebrowAs::Div, size: EyebrowSize::Sm, mb: Mb::Mb2, "Preview" }
-                div { class: "prose max-w-none rounded border border-white/10 p-4",
+                div { class: "prose max-w-none rounded-lg border border-white/10 p-4",
                     {render_preview()}
                 }
             }

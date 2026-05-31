@@ -174,7 +174,7 @@ pub fn AdminAnalytics() -> Element {
                                 for d in days {
                                     div {
                                         key: "{d.day}",
-                                        class: "group relative flex-1 rounded-t bg-brand-500/70 hover:bg-brand-400",
+                                        class: "group relative flex-1 rounded-t-lg bg-brand-500/70 hover:bg-brand-400",
                                         style: "height: {(d.views * 100) / peak}%",
                                         title: "{d.day}: {d.views} views",
                                     }

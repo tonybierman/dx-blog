@@ -36,10 +36,12 @@ async fn test_pool() -> Pool {
         .execute(&pool)
         .await
         .expect("create users stub");
-    sqlx::raw_sql(include_str!("../../migrations/0001_blog.sql"))
-        .execute(&pool)
-        .await
-        .expect("apply blog schema");
+    sqlx::raw_sql(include_str!(
+        "../../migrations/sqlite/20260601000000_blog_init.sql"
+    ))
+    .execute(&pool)
+    .await
+    .expect("apply blog schema");
     // Author rows the fixtures attribute posts/comments to.
     for id in [1_i64, 2] {
         sqlx::query("INSERT INTO users (id) VALUES (?)")
@@ -63,6 +65,51 @@ async fn insert_post(pool: &Pool, title: &str, slug: &str) {
 }
 
 // ---------------------------------------------------------------- markdown
+
+// Ground truth for the §4 dialect work: confirm sqlx-sqlite accepts Postgres-style
+// `$N` placeholders. SQLite's grammar treats `$VVV` as a named parameter for any
+// identifier VVV; sqlx-sqlite binds positionally regardless of the sigil. If this
+// test fails, every dialect-divergent query has to gate placeholder syntax per
+// backend (the `ph()` helper the plan reserves for that case).
+// Ground truth for the §5 timestamp work: which TEXT formats does sqlx-sqlite's
+// chrono decoder accept for `DateTime<Utc>`? If `datetime('now')`-style strings
+// ('YYYY-MM-DD HH:MM:SS' — space separator, no timezone) decode cleanly, the
+// SQLite path needs no backfill; otherwise we must rewrite existing rows and
+// flip column DEFAULTs to RFC3339 ('YYYY-MM-DDTHH:MM:SSZ').
+#[tokio::test]
+async fn sqlx_sqlite_chrono_decode_formats() {
+    use chrono::{DateTime, Utc};
+    let pool = test_pool().await;
+    // Format A: the current SQLite DEFAULT — `datetime('now')` returns this.
+    let a: Result<DateTime<Utc>, _> = sqlx::query_scalar("SELECT datetime('now')")
+        .fetch_one(&pool)
+        .await;
+    let a_ok = a.is_ok();
+    // Format B: RFC3339 with Z suffix.
+    let b: Result<DateTime<Utc>, _> =
+        sqlx::query_scalar("SELECT strftime('%Y-%m-%dT%H:%M:%SZ', 'now')")
+            .fetch_one(&pool)
+            .await;
+    let b_ok = b.is_ok();
+    println!("sqlx-sqlite chrono decode: 'YYYY-MM-DD HH:MM:SS' = {a_ok}, RFC3339Z = {b_ok}");
+    // The assertion below documents the empirical result. Update if sqlx changes.
+    assert!(
+        b_ok,
+        "RFC3339 with Z must decode (this is the target SQLite format): {b:?}"
+    );
+}
+
+#[tokio::test]
+async fn sqlx_sqlite_accepts_dollar_placeholders() {
+    let pool = test_pool().await;
+    let n: i64 = sqlx::query_scalar("SELECT $1 + $2")
+        .bind(40_i64)
+        .bind(2_i64)
+        .fetch_one(&pool)
+        .await
+        .expect("dollar placeholders should bind in sqlx-sqlite");
+    assert_eq!(n, 42);
+}
 
 #[test]
 fn render_markdown_emits_html() {
@@ -232,12 +279,11 @@ fn page_offset_clamps_and_computes() {
 }
 
 #[test]
-fn to_rfc3339_normalizes_sqlite_datetime() {
+fn to_rfc3339_formats_with_z_suffix() {
     use crate::model::to_rfc3339;
-    assert_eq!(to_rfc3339("2024-01-02 03:04:05"), "2024-01-02T03:04:05Z");
-    // Already ISO 8601 — passed through unchanged.
-    assert_eq!(to_rfc3339("2024-01-02T03:04:05Z"), "2024-01-02T03:04:05Z");
-    assert_eq!(to_rfc3339(""), "");
+    use chrono::TimeZone;
+    let dt = chrono::Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
+    assert_eq!(to_rfc3339(&dt), "2024-01-02T03:04:05Z");
 }
 
 // ---------------------------------------------------------------- slug uniqueness

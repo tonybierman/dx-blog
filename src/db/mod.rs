@@ -2,12 +2,14 @@
 //! Server functions call these functions, then map `sqlx::Error` to
 //! `ServerFnError` with `sfe()` — that mapping never lives here.
 //!
-//! Pool type: `arium_dioxus::pool::Pool` is a type alias for `sqlx::SqlitePool`,
-//! so db functions accept `&sqlx::SqlitePool` and callers pass `&db.0` directly.
+//! Pool type: `arium_dioxus::pool::Pool` is the compile-time backend alias
+//! (`SqlitePool` or `PgPool` depending on the active feature), so db functions
+//! accept `&Pool` and callers pass `&db.0` directly.
 
 pub mod analytics;
 pub mod authors;
 pub mod comments;
+pub mod dialect;
 pub mod feeds;
 pub mod media;
 pub mod posts;
@@ -16,7 +18,7 @@ pub mod settings;
 pub mod subscribers;
 pub mod taxonomy;
 
-use sqlx::SqlitePool;
+use arium_dioxus::pool::Pool;
 
 /// The `PostCard` 10-column projection shared across every feed, search, and
 /// analytics read path. Compose with `format!`; the `FROM` clause and bind
@@ -33,11 +35,7 @@ pub const POST_CARD_JOINS: &str =
 
 /// Generate a unique slug for `name` within `table`, appending `-2`, `-3`, …
 /// on collision. `table` is always an internal constant, never user input.
-pub async fn unique_slug(
-    pool: &SqlitePool,
-    table: &str,
-    name: &str,
-) -> Result<String, sqlx::Error> {
+pub async fn unique_slug(pool: &Pool, table: &str, name: &str) -> Result<String, sqlx::Error> {
     let base = {
         let s = slug::slugify(name);
         if s.is_empty() {
@@ -48,7 +46,7 @@ pub async fn unique_slug(
     };
     let mut candidate = base.clone();
     let mut n = 2;
-    let sql = format!("SELECT id FROM {table} WHERE slug = ?");
+    let sql = format!("SELECT id FROM {table} WHERE slug = $1");
     loop {
         let exists: Option<i64> = sqlx::query_scalar(&sql)
             .bind(&candidate)

@@ -108,7 +108,10 @@ pub async fn sitemap_handler(db: DbExtension) -> Result<impl IntoResponse, Statu
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     for (slug, lastmod) in posts {
-        urls.push((format!("{base}/post/{slug}"), Some(to_rfc3339(&lastmod))));
+        urls.push((
+            format!("{base}/post/{slug}"),
+            lastmod.as_ref().map(to_rfc3339),
+        ));
     }
 
     let category_slugs = feed_category_slugs_db(pool).await.map_err(|e| {
@@ -174,15 +177,8 @@ pub async fn atom_handler(db: DbExtension) -> Result<impl IntoResponse, StatusCo
     // Atom requires the element even for an empty feed, so fall back to epoch.
     let feed_updated = posts
         .first()
-        .map(|p| {
-            let raw = if !p.updated_at.trim().is_empty() {
-                p.updated_at.as_str()
-            } else {
-                p.published_at.as_deref().unwrap_or("")
-            };
-            to_rfc3339(raw)
-        })
-        .filter(|s| !s.is_empty())
+        .and_then(|p| p.updated_at.as_ref().or(p.published_at.as_ref()))
+        .map(to_rfc3339)
         .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
 
     let mut body = String::new();
@@ -202,13 +198,9 @@ pub async fn atom_handler(db: DbExtension) -> Result<impl IntoResponse, StatusCo
 
     for p in posts {
         let url = format!("{base}/post/{}", p.slug);
-        let published = p
-            .published_at
-            .as_deref()
-            .map(to_rfc3339)
-            .unwrap_or_default();
+        let published = p.published_at.as_ref().map(to_rfc3339).unwrap_or_default();
         let updated = {
-            let u = to_rfc3339(&p.updated_at);
+            let u = p.updated_at.as_ref().map(to_rfc3339).unwrap_or_default();
             if u.is_empty() {
                 published.clone()
             } else {

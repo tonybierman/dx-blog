@@ -7,6 +7,7 @@ use arium_dioxus::auth;
 use arium_dioxus::pool::Pool;
 
 use crate::auth_tokens::{ALL_TOKENS, MEDIA_UPLOAD, POSTS_WRITE};
+use crate::db::dialect::{self, RANDOM_HEX_16};
 use crate::server::render_markdown;
 
 /// Tokens granted to the two demo (non-admin) authors. The admin gets the full
@@ -14,11 +15,13 @@ use crate::server::render_markdown;
 const AUTHOR_TOKENS: &[&str] = &[POSTS_WRITE, MEDIA_UPLOAD];
 
 async fn grant_token(pool: &Pool, user_id: i64, token: &str) -> anyhow::Result<()> {
-    sqlx::query("INSERT OR IGNORE INTO user_permissions (user_id, token) VALUES (?, ?)")
-        .bind(user_id)
-        .bind(token)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "INSERT INTO user_permissions (user_id, token) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(token)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -40,7 +43,7 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
     let admin_password = match std::env::var("DX_SEED_ADMIN_PASSWORD") {
         Ok(p) if !p.trim().is_empty() => p,
         _ => {
-            let generated: String = sqlx::query_scalar("SELECT lower(hex(randomblob(16)))")
+            let generated: String = sqlx::query_scalar(&format!("SELECT {RANDOM_HEX_16}"))
                 .fetch_one(pool)
                 .await?;
             tracing::info!(
@@ -67,7 +70,7 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
         Ok(p) if !p.trim().is_empty() => p,
         _ if cfg!(debug_assertions) => "password".to_string(),
         _ => {
-            let generated: String = sqlx::query_scalar("SELECT lower(hex(randomblob(16)))")
+            let generated: String = sqlx::query_scalar(&format!("SELECT {RANDOM_HEX_16}"))
                 .fetch_one(pool)
                 .await?;
             tracing::info!(
@@ -108,7 +111,7 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
     let mut category_ids = Vec::new();
     for (name, slug, desc) in categories {
         let id: i64 = sqlx::query_scalar(
-            "INSERT INTO categories (name, slug, description) VALUES (?, ?, ?) RETURNING id",
+            "INSERT INTO categories (name, slug, description) VALUES ($1, $2, $3) RETURNING id",
         )
         .bind(name)
         .bind(slug)
@@ -134,7 +137,7 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
     let mut tag_ids = Vec::new();
     for name in tags {
         let id: i64 =
-            sqlx::query_scalar("INSERT INTO tags (name, slug) VALUES (?, ?) RETURNING id")
+            sqlx::query_scalar("INSERT INTO tags (name, slug) VALUES ($1, $2) RETURNING id")
                 .bind(name)
                 .bind(name)
                 .fetch_one(pool)
@@ -162,15 +165,16 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
         let body_html = render_markdown(&body_md);
         let excerpt = format!("A short demo article ({n}) about {}.", tags[i % tags.len()]);
 
-        let pid: i64 = sqlx::query_scalar(
+        let pub_at = dialect::now_offset(10);
+        let pid: i64 = sqlx::query_scalar(&format!(
             r#"
             INSERT INTO posts
               (title, slug, body_md, body_html, excerpt, author_id, category_id, status, published_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?,
-              CASE WHEN ? = 'published' THEN datetime('now', ?) ELSE NULL END)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+              CASE WHEN $9 = 'published' THEN {pub_at} ELSE NULL END)
             RETURNING id
             "#,
-        )
+        ))
         .bind(&title)
         .bind(&slug)
         .bind(&body_md)
@@ -188,17 +192,19 @@ pub async fn run_if_empty(pool: &Pool) -> anyhow::Result<()> {
         // 1–3 tags per post.
         for k in 0..(1 + (i % 3)) {
             let tid = tag_ids[(i + k) % tag_ids.len()];
-            sqlx::query("INSERT OR IGNORE INTO post_tags (post_id, tag_id) VALUES (?, ?)")
-                .bind(pid)
-                .bind(tid)
-                .execute(pool)
-                .await?;
+            sqlx::query(
+                "INSERT INTO post_tags (post_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            )
+            .bind(pid)
+            .bind(tid)
+            .execute(pool)
+            .await?;
         }
 
         // Author owns the post.
         sqlx::query(
             "INSERT INTO arium_resource_members (kind, resource_id, user_id, role)
-             VALUES ('post', ?, ?, 'owner')
+             VALUES ('post', $1, $2, 'owner')
              ON CONFLICT (kind, resource_id, user_id) DO UPDATE SET role = excluded.role",
         )
         .bind(pid)
@@ -279,14 +285,15 @@ the price ticks and the session change flips green/red.
         let category = category_ids[i % category_ids.len()];
         let body_html = render_markdown(body_md);
 
-        let pid: i64 = sqlx::query_scalar(
+        let pub_at = dialect::now_offset(8);
+        let pid: i64 = sqlx::query_scalar(&format!(
             r#"
             INSERT INTO posts
               (title, slug, body_md, body_html, excerpt, author_id, category_id, status, published_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'published', datetime('now', ?))
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'published', {pub_at})
             RETURNING id
             "#,
-        )
+        ))
         .bind(title)
         .bind(slug)
         .bind(body_md)
@@ -301,7 +308,7 @@ the price ticks and the session change flips green/red.
 
         sqlx::query(
             "INSERT INTO arium_resource_members (kind, resource_id, user_id, role)
-             VALUES ('post', ?, ?, 'owner')
+             VALUES ('post', $1, $2, 'owner')
              ON CONFLICT (kind, resource_id, user_id) DO UPDATE SET role = excluded.role",
         )
         .bind(pid)
@@ -319,7 +326,7 @@ the price ticks and the session change flips green/red.
             // guest comment
             sqlx::query(
                 "INSERT INTO comments (post_id, guest_name, guest_email, body, status)
-                 VALUES (?, ?, ?, ?, ?)",
+                 VALUES ($1, $2, $3, $4, $5)",
             )
             .bind(pid)
             .bind(format!("Guest {i}"))
@@ -331,7 +338,7 @@ the price ticks and the session change flips green/red.
         } else {
             let commenter = author_ids[i % author_ids.len()];
             sqlx::query(
-                "INSERT INTO comments (post_id, author_id, body, status) VALUES (?, ?, ?, ?)",
+                "INSERT INTO comments (post_id, author_id, body, status) VALUES ($1, $2, $3, $4)",
             )
             .bind(pid)
             .bind(commenter)
@@ -344,11 +351,13 @@ the price ticks and the session change flips green/red.
 
     // --- Subscribers -------------------------------------------------------
     for i in 1..=5 {
-        sqlx::query("INSERT OR IGNORE INTO subscribers (email, confirmed) VALUES (?, ?)")
-            .bind(format!("subscriber{i}@example.com"))
-            .bind((i % 2 == 0) as i64)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO subscribers (email, confirmed) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(format!("subscriber{i}@example.com"))
+        .bind(i % 2 == 0)
+        .execute(pool)
+        .await?;
     }
 
     tracing::info!(

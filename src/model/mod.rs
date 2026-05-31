@@ -2,6 +2,7 @@
 //! always present; `sqlx::FromRow` is added only on the server build so the
 //! same struct can be selected straight out of SQLite.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 macro_rules! wire_struct {
@@ -39,7 +40,7 @@ wire_struct! {
         pub author_username: String,
         pub category_name: Option<String>,
         pub status: String,
-        pub published_at: Option<String>,
+        pub published_at: Option<DateTime<Utc>>,
         /// Responsive `srcset` for the featured image's WebP/AVIF renditions,
         /// filled server-side from `media_variants` when the image is a local
         /// upload (see `db::media::attach_card_variants`). Not SQL columns
@@ -71,8 +72,8 @@ wire_struct! {
         pub category_id: Option<i64>,
         pub category_name: Option<String>,
         pub status: String,
-        pub published_at: Option<String>,
-        pub created_at: String,
+        pub published_at: Option<DateTime<Utc>>,
+        pub created_at: Option<DateTime<Utc>>,
         /// The body pre-rendered into highlighted HTML runs + embed blocks,
         /// filled server-side in `get_post` so the reader displays it without
         /// re-running the markdown/highlight pipeline on the client. Not a SQL
@@ -116,7 +117,7 @@ wire_struct! {
         pub display_name: String,
         pub body: String,
         pub status: String,
-        pub created_at: String,
+        pub created_at: Option<DateTime<Utc>>,
     }
 }
 
@@ -128,7 +129,7 @@ wire_struct! {
         pub post_slug: String,
         pub display_name: String,
         pub body: String,
-        pub created_at: String,
+        pub created_at: Option<DateTime<Utc>>,
     }
 }
 
@@ -209,7 +210,7 @@ wire_struct! {
         pub filename: String,
         pub url: String,
         pub uploaded_by: i64,
-        pub created_at: String,
+        pub created_at: Option<DateTime<Utc>>,
         /// How many posts reference this image (as a featured/cover image or
         /// inline in the body). Derived server-side in `list_media` (not a SQL
         /// column); drives the "Used in N posts" label and the delete guard.
@@ -337,36 +338,17 @@ pub fn page_offset(page: i64) -> (i64, i64) {
 
 /// Normalize a stored SQLite datetime (`YYYY-MM-DD HH:MM:SS`, UTC) to the ISO
 /// 8601 / RFC 3339 form (`YYYY-MM-DDTHH:MM:SSZ`) that Atom, the sitemap, and Open
-/// Graph all expect: just a separator swap plus a `Z` UTC marker. Empty input and
-/// values already carrying a `T` pass through unchanged. Shared by the feed /
-/// sitemap (server) and the per-post `<head>` tags (client).
-pub fn to_rfc3339(dt: &str) -> String {
-    let t = dt.trim();
-    if t.is_empty() || t.contains('T') {
-        return t.to_string();
-    }
-    format!("{}Z", t.replacen(' ', "T", 1))
+/// Format a UTC timestamp as RFC3339 with a `Z` suffix (e.g.
+/// `"2024-01-02T03:04:05Z"`). Shared by the Atom feed, sitemap, and the per-post
+/// `<head>` Open Graph tags.
+pub fn to_rfc3339(dt: &DateTime<Utc>) -> String {
+    dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
-/// Trim a stored SQLite datetime (`YYYY-MM-DD HH:MM:SS`) down to just the date
-/// (`YYYY-MM-DD`) for display in the UI. Accepts either a space- or `T`-separated
-/// time component. Anything that doesn't start with a `YYYY-MM-DD` date (e.g. an
-/// optimistic "just now" placeholder) passes through unchanged.
-pub fn fmt_date(dt: &str) -> String {
-    let t = dt.trim();
-    let looks_like_date = t.len() >= 10
-        && t.as_bytes()[..10].iter().enumerate().all(|(i, &b)| {
-            if i == 4 || i == 7 {
-                b == b'-'
-            } else {
-                b.is_ascii_digit()
-            }
-        });
-    if looks_like_date {
-        t[..10].to_string()
-    } else {
-        t.to_string()
-    }
+/// `YYYY-MM-DD` date portion of a UTC timestamp, for terse display in card
+/// listings and the comment timeline.
+pub fn fmt_date(dt: &DateTime<Utc>) -> String {
+    dt.format("%Y-%m-%d").to_string()
 }
 
 /// The post lifecycle statuses. Single source of truth for the server-side

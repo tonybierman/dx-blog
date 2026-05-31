@@ -24,7 +24,7 @@ serde_json = "1"
 # `default-features = false` so we pick capabilities explicitly. `sql-membership`
 # brings `SqlMembershipStore` + `membership_migrator` for per-post ownership.
 # Cargo.lock pins the exact commit; bump with `cargo update -p arium-dioxus`.
-arium-dioxus = { git = "https://github.com/tonybierman/arium", branch = "main", default-features = false, features = [
+arium-dioxus = { git = "https://github.com/Riparion/arium", branch = "main", default-features = false, features = [
     "ui",
     "mail",
     "mfa",
@@ -37,6 +37,16 @@ arium-dioxus = { git = "https://github.com/tonybierman/arium", branch = "main", 
 # Wire types (serde) shared across the client/server boundary — needed on both
 # targets, so not gated behind `server`.
 serde = { version = "1", features = ["derive"] }
+
+# Timestamps in the wire structs (PostCard/PostDetail/CommentView/…) are
+# `Option<DateTime<Utc>>`, so chrono crosses the client/server boundary too.
+# `serde` for JSON round-trip; `alloc` for `format(...)` / `to_rfc3339_opts(...)`
+# on the wasm side (no need for `clock`/`std` — wasm never reads system time
+# here, the server gets timestamps via sqlx).
+chrono = { version = "0.4", default-features = false, features = [
+    "serde",
+    "alloc",
+] }
 
 # Structured logging. The macros are used in server-side code (server fns,
 # feeds, startup), but the crate compiles on both targets and is already pulled
@@ -52,6 +62,7 @@ sqlx = { version = "0.8.6", default-features = false, optional = true, features 
     "macros",
     "migrate",
     "runtime-tokio",
+    "chrono",
 ] }
 anyhow = { version = "1.0.98", optional = true }
 tower-http = { version = "0.6", optional = true, features = ["fs"] }        # static /uploads

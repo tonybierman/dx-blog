@@ -45,6 +45,11 @@ services:
       # DEV/no-SMTP only: auto-confirm signups (skips the verification email).
       # Unset -> off. Leave off once a mailer is configured.
       DX_AUTH_SKIP_EMAIL_VERIFICATION: ${DX_AUTH_SKIP_EMAIL_VERIFICATION:-}
+      # Override arium's per-IP rate limit. `off` disables the limiter entirely
+      # (DEV ONLY — login is among the rate-limited endpoints, and an aggressive
+      # limit can 429 a normal login form submission). Unset -> the release-mode
+      # default in main.rs (burst 128, 16 req/s) applies inside the container.
+      DX_RATE_LIMIT: ${DX_RATE_LIMIT:-}
       # --- Optional integrations --------------------------------------------
       # SMTP_HOST:
       # SMTP_PORT: "587"

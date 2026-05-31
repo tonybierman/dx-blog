@@ -26,8 +26,15 @@ pub mod settings;
 pub mod subscribers;
 pub mod taxonomy;
 
-#[cfg(all(test, feature = "server"))]
+// Tests use an in-memory SqlitePool + include_str! on the SQLite-dialect init
+// migration; they're meaningful only for the sqlite backend.
+#[cfg(all(test, feature = "server", feature = "sqlite"))]
 mod tests;
+// Postgres-only coverage: runs the migration stack against a live `DATABASE_URL`
+// (the CI `pg-migrate` job provides one). Gated separately so the sqlite test
+// job doesn't try to compile the postgres-specific PgPoolOptions imports.
+#[cfg(all(test, feature = "server", feature = "postgres"))]
+mod tests_postgres;
 
 #[cfg(feature = "server")]
 pub type DbExtension = axum::Extension<arium_dioxus::pool::Pool>;

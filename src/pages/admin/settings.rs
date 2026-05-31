@@ -67,7 +67,7 @@ pub fn AdminSettings() -> Element {
                     label { class: "mb-1 block text-sm font-medium", "Site title" }
                     Input {
                         class: "w-full",
-                        placeholder: "dx-blog",
+                        placeholder: "riparion-cms",
                         value: "{title_draft}",
                         oninput: move |e: FormEvent| { title_draft.set(e.value()); saved.set(false); err.set(String::new()); },
                     }

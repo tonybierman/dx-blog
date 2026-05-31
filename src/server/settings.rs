@@ -42,7 +42,7 @@ pub async fn set_theme_hue(hue: i64) -> Result<()> {
 }
 
 /// Default site title — the hard-coded brand used before an admin sets one.
-pub const DEFAULT_SITE_TITLE: &str = "dx-blog";
+pub const DEFAULT_SITE_TITLE: &str = "riparion-cms";
 
 /// The site's display title (shown in the header/footer brand). Public — chrome
 /// reads it on every page. Falls back to [`DEFAULT_SITE_TITLE`] when unset.

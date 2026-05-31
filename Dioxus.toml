@@ -3,7 +3,7 @@
 [web.app]
 
 # HTML title tag content
-title = "dx-blog"
+title = "riparion-cms"
 
 # include `assets` in web platform
 [web.resource]

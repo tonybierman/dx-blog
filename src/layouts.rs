@@ -392,7 +392,7 @@ pub fn HeroScrollLayout(#[props(optional)] hero: Option<Element>, children: Elem
                 if let Some(hero) = hero {
                     {hero}
                 } else {
-                    h1 { class: "text-4xl font-bold", "dx-blog" }
+                    h1 { class: "text-4xl font-bold", "riparion-cms" }
                     p { class: "mt-4 text-white/60", "Latest writing, below." }
                 }
             }

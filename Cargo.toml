@@ -1,10 +1,10 @@
 [package]
-name = "dx-blog"
+name = "riparion-cms"
 version = "0.1.0"
 authors = ["Tony Bierman <tonybierman@gmail.com>"]
 edition = "2021"
 description = "A full-featured blog on Dioxus Fullstack (Rust), with auth/authz from arium."
-repository = "https://github.com/tonybierman/dx-blog"
+repository = "https://github.com/tonybierman/riparion-cms"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 

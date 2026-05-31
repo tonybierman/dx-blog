@@ -1,4 +1,4 @@
-# Run dx-blog in a container. Build the image and start it with:
+# Run riparion-cms in a container. Build the image and start it with:
 #
 #   DOCKER_BUILDKIT=1 docker compose up --build
 #
@@ -14,7 +14,7 @@ services:
       args:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
-    image: dx-blog
+    image: riparion-cms
     ports:
       - "8888:8888"
     volumes:

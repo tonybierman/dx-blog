@@ -2035,38 +2035,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
-name = "dx-blog"
-version = "0.1.0"
-dependencies = [
- "ammonia",
- "anyhow",
- "arium-dioxus",
- "axum",
- "base64",
- "dioxus",
- "dioxus-icons",
- "dioxus-primitives 0.0.1 (git+https://github.com/DioxusLabs/components)",
- "dioxus-sdk-time",
- "dioxus-web",
- "futures",
- "futures-util",
- "gloo-net",
- "image",
- "pulldown-cmark",
- "regex",
- "serde",
- "serde_json",
- "slug",
- "sqlx",
- "syntect",
- "tokio",
- "tokio-stream",
- "tower-http",
- "tracing",
- "webp",
-]
-
-[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4736,6 +4704,38 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "riparion-cms"
+version = "0.1.0"
+dependencies = [
+ "ammonia",
+ "anyhow",
+ "arium-dioxus",
+ "axum",
+ "base64",
+ "dioxus",
+ "dioxus-icons",
+ "dioxus-primitives 0.0.1 (git+https://github.com/DioxusLabs/components)",
+ "dioxus-sdk-time",
+ "dioxus-web",
+ "futures",
+ "futures-util",
+ "gloo-net",
+ "image",
+ "pulldown-cmark",
+ "regex",
+ "serde",
+ "serde_json",
+ "slug",
+ "sqlx",
+ "syntect",
+ "tokio",
+ "tokio-stream",
+ "tower-http",
+ "tracing",
+ "webp",
 ]
 
 [[package]]

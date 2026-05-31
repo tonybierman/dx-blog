@@ -28,7 +28,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     dx bundle --platform web --fullstack --release \
  && mkdir -p /out \
- && cp -a target/dx/dx-blog/release/web/. /out/
+ && cp -a target/dx/riparion-cms/release/web/. /out/
 
 # ----------------------------------------------------------------------------
 # Stage 2 — slim runtime. Only the server binary + public/ ship here.

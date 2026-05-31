@@ -1,4 +1,4 @@
-//! dx-blog — a full-featured blog on Dioxus Fullstack, with auth/authz from the
+//! riparion-cms — a full-featured blog on Dioxus Fullstack, with auth/authz from the
 //! local `arium` workspace.
 //!
 //! - arium owns users / roles / sessions / password+OAuth flows and ships the
@@ -502,7 +502,7 @@ fn App() -> Element {
         document::Link {
             rel: "alternate",
             r#type: "application/atom+xml",
-            title: "dx-blog feed",
+            title: "riparion-cms feed",
             href: "/feed.xml",
         }
         // arium's catalog theme tokens (canonical — no vendored copy).

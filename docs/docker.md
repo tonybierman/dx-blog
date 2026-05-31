@@ -37,7 +37,7 @@ The `Dockerfile` has two stages:
 
    This compiles the hydrated wasm client, compiles `tailwind.css` into the
    hashed `public/assets/tailwind-*.css`, and links the axum server binary. The
-   artifacts land in `target/dx/dx-blog/release/web/` (a `server` binary and a
+   artifacts land in `target/dx/riparion-cms/release/web/` (a `server` binary and a
    `public/` directory) and are copied to `/out`.
 
 2. **Runtime** (`debian:bookworm-slim`) — copies `/out` to `/app` and adds

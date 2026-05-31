@@ -1,4 +1,4 @@
-# dx-blog tasks. Run `just` to list recipes.
+# riparion-cms tasks. Run `just` to list recipes.
 
 # Optional, gitignored local recipes (`?` = skipped when the file is absent, so
 # contributors/CI without it aren't broken). Add personal recipes to local.just.

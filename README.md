@@ -1,4 +1,4 @@
-# dx-blog
+# riparion-cms
 
 A full-featured blog built on [Dioxus](https://dioxuslabs.com) Fullstack (Rust), with
 authentication and authorization provided by [arium](https://github.com/tonybierman/arium).

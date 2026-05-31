@@ -17,7 +17,7 @@
 local.just
 
 # Shipped image artifact produced by the deploy recipes (docker save | gzip)
-/dx-blog.tar.gz
+/riparion-cms.tar.gz
 
 # Per-host compose deltas (proxy network, etc.) live only on the server.
 docker-compose.override.yml

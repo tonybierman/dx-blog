@@ -68,7 +68,7 @@ pub fn HomePage() -> Element {
             SplitScreenLayout {
                 intro: rsx! {
                     div {
-                        h1 { class: "text-3xl font-bold", "dx-blog" }
+                        h1 { class: "text-3xl font-bold", "riparion-cms" }
                         p { class: "mt-3 text-white/60", "Latest writing from the blog." }
                     }
                 },

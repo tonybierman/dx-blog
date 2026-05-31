@@ -11,7 +11,9 @@ use dioxus::prelude::*;
 use arium_dioxus::server::logout;
 use arium_dioxus::ui::use_permissions;
 
+use crate::components::breadcrumb::Breadcrumb;
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::input::Input;
 use crate::components::navbar::{Navbar, NavbarContent, NavbarItem, NavbarNav, NavbarTrigger};
 use crate::model::SiteMeta;
 use crate::server::settings::DEFAULT_SITE_TITLE;
@@ -38,6 +40,9 @@ pub fn SiteHeader() -> Element {
         .profile()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
+
+    let mut search_q = use_signal(String::new);
+    let nav = use_navigator();
 
     // Admin-configurable branding (see AdminSettings), shared via context with
     // SiteFooter. Falls back to the compiled-in default until the meta resolves.
@@ -67,19 +72,21 @@ pub fn SiteHeader() -> Element {
                 // signed-in account actions (keyboard-navigable, themed via the
                 // dx-components tokens).
                 Navbar { aria_label: "Primary",
-                    NavbarItem { index: 0usize, value: "home".to_string(), to: Route::HomePage, "Home" }
-                    NavbarItem { index: 1usize, value: "archive".to_string(), to: Route::Archive, "Archive" }
-                    NavbarItem {
-                        index: 2usize,
-                        value: "search".to_string(),
-                        to: Route::SearchResults { q: String::new() },
-                        "Search"
+                    form {
+                        class: "flex items-center gap-1",
+                        onsubmit: move |_| {
+                            nav.push(Route::SearchResults { q: search_q() });
+                        },
+                        Input {
+                            r#type: "search",
+                            placeholder: "Search…",
+                            value: "{search_q}",
+                            oninput: move |e: FormEvent| search_q.set(e.value()),
+                            class: "h-7 w-36 py-0 text-sm",
+                        }
                     }
                     if authed {
-                        if let Some(route) = admin_route.clone() {
-                            NavbarItem { index: 3usize, value: "admin".to_string(), to: route, "Admin" }
-                        }
-                        NavbarNav { index: 4usize,
+                        NavbarNav { index: 1usize,
                             NavbarTrigger { "{name}" }
                             NavbarContent {
                                 NavbarItem {
@@ -88,8 +95,16 @@ pub fn SiteHeader() -> Element {
                                     to: Route::AccountPage,
                                     "Account"
                                 }
+                                if let Some(route) = admin_route.clone() {
+                                    NavbarItem {
+                                        index: 1usize,
+                                        value: "admin".to_string(),
+                                        to: route,
+                                        "Admin"
+                                    }
+                                }
                                 NavbarItem {
-                                    index: 1usize,
+                                    index: 2usize,
                                     value: "signout".to_string(),
                                     to: Route::HomePage,
                                     onclick: move |_| {
@@ -156,7 +171,10 @@ pub fn HolyGrailLayout(
                 if let Some(left) = left {
                     aside { class: "hidden md:block", {left} }
                 }
-                main { class: "min-w-0", {children} }
+                main { class: "min-w-0",
+                    Breadcrumb {}
+                    {children}
+                }
                 if let Some(right) = right {
                     aside { class: "hidden md:block", {right} }
                 }
@@ -182,6 +200,7 @@ pub fn BentoGridLayout(#[props(optional)] left: Option<Element>, children: Eleme
         div { class: "flex min-h-screen flex-col",
             SiteHeader {}
             main { class: "mx-auto w-full max-w-6xl flex-1 px-4 py-6",
+                Breadcrumb {}
                 if let Some(left) = left {
                     div { class: "mb-4", {left} }
                 }
@@ -200,6 +219,7 @@ pub fn MasonryLayout(children: Element) -> Element {
         div { class: "flex min-h-screen flex-col",
             SiteHeader {}
             main { class: "mx-auto w-full max-w-6xl flex-1 px-4 py-6",
+                Breadcrumb {}
                 div { class: "gap-4 [column-gap:1rem] columns-1 sm:columns-2 lg:columns-3", {children} }
             }
             SiteFooter {}
@@ -218,7 +238,10 @@ pub fn StickySidebarLayout(nav: Element, children: Element) -> Element {
                 aside { class: "border-b border-white/10 p-4 md:h-screen md:w-56 md:shrink-0 md:self-start md:sticky md:top-0 md:overflow-y-auto md:border-b-0 md:border-r",
                     {nav}
                 }
-                main { class: "min-w-0 flex-1 p-6", {children} }
+                main { class: "min-w-0 flex-1 p-6",
+                    Breadcrumb {}
+                    {children}
+                }
             }
             SiteFooter {}
         }
@@ -234,7 +257,10 @@ pub fn SplitScreenLayout(intro: Element, children: Element) -> Element {
             SiteHeader {}
             div { class: "grid flex-1 grid-cols-1 md:grid-cols-2",
                 div { class: "flex items-center justify-center bg-black/40 p-12", {intro} }
-                main { class: "min-w-0 p-8", {children} }
+                main { class: "min-w-0 p-8",
+                    Breadcrumb {}
+                    {children}
+                }
             }
             SiteFooter {}
         }
@@ -272,7 +298,10 @@ pub fn DrawerLayout(nav: Element, children: Element) -> Element {
                 },
                 {nav}
             }
-            main { class: "mx-auto w-full max-w-6xl flex-1 p-6", {children} }
+            main { class: "mx-auto w-full max-w-6xl flex-1 p-6",
+                Breadcrumb {}
+                {children}
+            }
             SiteFooter {}
         }
     }
@@ -304,7 +333,10 @@ pub fn MegaMenuLayout(panel: Element, children: Element) -> Element {
                     }
                 }
             }
-            main { class: "mx-auto w-full max-w-6xl flex-1 p-6", {children} }
+            main { class: "mx-auto w-full max-w-6xl flex-1 p-6",
+                Breadcrumb {}
+                {children}
+            }
             SiteFooter {}
         }
     }
@@ -317,7 +349,10 @@ pub fn CardGridLayout(children: Element) -> Element {
     rsx! {
         div { class: "flex min-h-screen flex-col",
             SiteHeader {}
-            main { class: "mx-auto w-full max-w-6xl flex-1 px-4 py-8", {children} }
+            main { class: "mx-auto w-full max-w-6xl flex-1 px-4 py-8",
+                Breadcrumb {}
+                {children}
+            }
             SiteFooter {}
         }
     }
@@ -331,6 +366,7 @@ pub fn EditorialLayout(#[props(optional)] sidebar: Option<Element>, children: El
         div { class: "flex min-h-screen flex-col",
             SiteHeader {}
             main { class: "mx-auto w-full max-w-4xl flex-1 px-4 py-8",
+                Breadcrumb {}
                 if let Some(sidebar) = sidebar {
                     div { class: "grid gap-8 md:grid-cols-[2fr_1fr]",
                         div { class: "min-w-0", {children} }
@@ -360,7 +396,10 @@ pub fn HeroScrollLayout(#[props(optional)] hero: Option<Element>, children: Elem
                     p { class: "mt-4 text-white/60", "Latest writing, below." }
                 }
             }
-            main { class: "mx-auto w-full max-w-5xl flex-1 px-4 py-10", {children} }
+            main { class: "mx-auto w-full max-w-5xl flex-1 px-4 py-10",
+                Breadcrumb {}
+                {children}
+            }
             SiteFooter {}
         }
     }
@@ -374,6 +413,7 @@ pub fn ScrollStickyLayout(visual: Element, children: Element) -> Element {
         div { class: "flex min-h-screen flex-col",
             SiteHeader {}
             main { class: "mx-auto w-full max-w-6xl flex-1 px-4 py-8",
+                Breadcrumb {}
                 div { class: "grid gap-8 md:grid-cols-[1fr_320px]",
                     div { class: "min-w-0", {children} }
                     aside { class: "hidden md:block",

@@ -10,5 +10,6 @@ pub mod textarea;
 
 // Project-local primitives (not from the catalog).
 pub mod alert_dialog;
+pub mod breadcrumb;
 pub mod surface;
 pub mod text;

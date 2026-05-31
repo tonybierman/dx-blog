@@ -52,6 +52,7 @@ pub fn AdminComments() -> Element {
                                                 ActionButton {
                                                     label: "Delete".to_string(),
                                                     variant: ButtonVariant::Destructive,
+                                                    confirm: Some("This permanently deletes the comment and can't be undone.".to_string()),
                                                     on_done: move |_| comments.restart(),
                                                     action: move |_| Box::pin(async move { delete_comment(cid).await }) as ActionFuture,
                                                 }

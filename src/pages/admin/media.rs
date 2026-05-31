@@ -3,6 +3,10 @@
 
 use dioxus::prelude::*;
 
+use crate::components::alert_dialog::{
+    AlertDialog, AlertDialogAction, AlertDialogActions, AlertDialogCancel, AlertDialogDescription,
+    AlertDialogTitle,
+};
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::surface::{Panel, PanelPadding, PanelVariant};
 use crate::components::text::PageTitle;
@@ -78,52 +82,10 @@ pub fn AdminMedia() -> Element {
                                         },
                                         "{m.url}"
                                     }
-                                    {
-                                        let mid = m.id;
-                                        let usage = m.usage_count;
-                                        rsx! {
-                                            Button {
-                                                variant: ButtonVariant::Destructive,
-                                                size: ButtonSize::Xs,
-                                                class: "shrink-0",
-                                                title: "Delete",
-                                                onclick: move |_| {
-                                                    spawn(async move {
-                                                        // Guard in-use images: confirm (listing the
-                                                        // posts) before deleting; unused ones delete
-                                                        // straight away.
-                                                        let proceed = if usage > 0 {
-                                                            let detail = match media_usage(mid).await {
-                                                                Ok(list) if !list.is_empty() => {
-                                                                    let lines = list
-                                                                        .iter()
-                                                                        .map(|p| format!("• {} ({})", p.title, p.kind))
-                                                                        .collect::<Vec<_>>()
-                                                                        .join("\n");
-                                                                    format!(":\n{lines}")
-                                                                }
-                                                                _ => String::new(),
-                                                            };
-                                                            let msg = format!(
-                                                                "This image is used in {usage} post(s){detail}\n\nDelete it anyway? The posts will show a broken image."
-                                                            );
-                                                            let msg_json = serde_json::to_string(&msg)
-                                                                .unwrap_or_else(|_| "\"Delete this image?\"".to_string());
-                                                            let mut eval = document::eval(&format!(
-                                                                "dioxus.send(window.confirm({msg_json}));"
-                                                            ));
-                                                            eval.recv::<bool>().await.unwrap_or(false)
-                                                        } else {
-                                                            true
-                                                        };
-                                                        if proceed && delete_media(mid).await.is_ok() {
-                                                            media.restart();
-                                                        }
-                                                    });
-                                                },
-                                                "✕"
-                                            }
-                                        }
+                                    MediaDeleteButton {
+                                        id: m.id,
+                                        usage_count: m.usage_count,
+                                        on_deleted: move |_| media.restart(),
                                     }
                                 }
                                 // Usage indicator — WordPress-style "where is this used".
@@ -138,6 +100,76 @@ pub fn AdminMedia() -> Element {
                         }
                     }
             })}
+        }
+    }
+}
+
+/// Delete control for one media item. Every delete now routes through an
+/// [`AlertDialog`] confirmation (replacing the old `window.confirm`). When the
+/// image is in use, opening the dialog lazily fetches the referencing posts and
+/// lists them so the admin sees exactly what will break.
+#[component]
+fn MediaDeleteButton(id: i64, usage_count: i64, on_deleted: EventHandler<()>) -> Element {
+    let mut open = use_signal(|| false);
+    // The "used in these posts" list, fetched on open for in-use images only.
+    let mut detail = use_signal(String::new);
+
+    let begin = move |_| {
+        open.set(true);
+        if usage_count > 0 && detail().is_empty() {
+            spawn(async move {
+                if let Ok(list) = media_usage(id).await {
+                    if !list.is_empty() {
+                        let lines = list
+                            .iter()
+                            .map(|p| format!("• {} ({})", p.title, p.kind))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        detail.set(lines);
+                    }
+                }
+            });
+        }
+    };
+
+    let description = if usage_count > 0 {
+        format!("This image is used in {usage_count} post(s) — they will show a broken image. This can't be undone.")
+    } else {
+        "This permanently deletes the image and can't be undone.".to_string()
+    };
+
+    rsx! {
+        Button {
+            variant: ButtonVariant::Destructive,
+            size: ButtonSize::Xs,
+            class: "shrink-0",
+            title: "Delete",
+            onclick: begin,
+            "✕"
+        }
+        AlertDialog {
+            open: open(),
+            on_open_change: move |v| open.set(v),
+            AlertDialogTitle { "Delete image?" }
+            AlertDialogDescription {
+                "{description}"
+                if !detail().is_empty() {
+                    pre { class: "mt-2 whitespace-pre-wrap text-xs text-white/60", "{detail}" }
+                }
+            }
+            AlertDialogActions {
+                AlertDialogCancel { "Cancel" }
+                AlertDialogAction {
+                    on_click: move |_| {
+                        spawn(async move {
+                            if delete_media(id).await.is_ok() {
+                                on_deleted.call(());
+                            }
+                        });
+                    },
+                    "Delete"
+                }
+            }
         }
     }
 }

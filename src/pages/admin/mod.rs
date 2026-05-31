@@ -14,6 +14,10 @@ use std::pin::Pin;
 
 use arium_dioxus::ui::{PermissionGate, Policy, RequirePermission};
 
+use crate::components::alert_dialog::{
+    AlertDialog, AlertDialogAction, AlertDialogActions, AlertDialogCancel, AlertDialogDescription,
+    AlertDialogTitle,
+};
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::text::ErrorText;
 
@@ -135,35 +139,66 @@ pub(crate) type ActionFuture = Pin<Box<dyn Future<Output = Result<()>>>>;
 /// that lived in five near-identical button components and two inline closures:
 /// it runs `action`, calls `on_done` on success, shows the error inline on
 /// failure, and blocks a double-click while the request is in flight.
+///
+/// Pass `confirm` with a message to gate the action behind an [`AlertDialog`] —
+/// destructive actions (delete) supply one so the mutation only fires after the
+/// user confirms; non-destructive ones (approve/reject) leave it `None` and run
+/// on the first click.
 #[component]
 pub(crate) fn ActionButton(
     label: String,
     #[props(default = ButtonVariant::Outline)] variant: ButtonVariant,
+    #[props(default)] confirm: Option<String>,
     on_done: EventHandler<()>,
     action: Callback<(), ActionFuture>,
 ) -> Element {
     let mut busy = use_signal(|| false);
     let mut err = use_signal(String::new);
+    let mut confirm_open = use_signal(|| false);
+
+    // The actual mutation, shared by the direct-click path and the confirm
+    // dialog's Action button.
+    let run = use_callback(move |_: ()| {
+        if busy() {
+            return;
+        }
+        busy.set(true);
+        err.set(String::new());
+        spawn(async move {
+            match action.call(()).await {
+                Ok(()) => on_done.call(()),
+                Err(e) => err.set(arium_dioxus::friendly_server_error(e)),
+            }
+            busy.set(false);
+        });
+    });
+
+    let needs_confirm = confirm.is_some();
     rsx! {
         Button {
             variant,
             size: ButtonSize::Xs,
             disabled: busy(),
             onclick: move |_| {
-                if busy() {
-                    return;
+                if needs_confirm {
+                    confirm_open.set(true);
+                } else {
+                    run.call(());
                 }
-                busy.set(true);
-                err.set(String::new());
-                spawn(async move {
-                    match action.call(()).await {
-                        Ok(()) => on_done.call(()),
-                        Err(e) => err.set(arium_dioxus::friendly_server_error(e)),
-                    }
-                    busy.set(false);
-                });
             },
             "{label}"
+        }
+        if let Some(message) = confirm {
+            AlertDialog {
+                open: confirm_open(),
+                on_open_change: move |v| confirm_open.set(v),
+                AlertDialogTitle { "Are you sure?" }
+                AlertDialogDescription { "{message}" }
+                AlertDialogActions {
+                    AlertDialogCancel { "Cancel" }
+                    AlertDialogAction { on_click: move |_| run.call(()), "{label}" }
+                }
+            }
         }
         if !err().is_empty() {
             ErrorText { inline: true, class: "ml-2 text-xs".to_string(), "{err}" }

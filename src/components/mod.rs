@@ -9,5 +9,6 @@ pub mod select;
 pub mod textarea;
 
 // Project-local primitives (not from the catalog).
+pub mod alert_dialog;
 pub mod surface;
 pub mod text;

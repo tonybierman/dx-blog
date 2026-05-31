@@ -48,7 +48,12 @@ pub fn AdminPostList() -> Element {
         AdminShell { active: "posts".to_string(),
             div { class: "mb-6 flex items-center justify-between",
                 PageTitle { mb: Mb::None, "Posts" }
-                Link { to: Route::AdminPostNew, class: "rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", "New post" }
+                Button {
+                    variant: ButtonVariant::Primary,
+                    size: ButtonSize::Sm,
+                    onclick: move |_| { navigator().push(Route::AdminPostNew); },
+                    "New post"
+                }
             }
             div { class: "mb-4 flex items-center gap-3 text-sm",
                 label { class: "text-white/50", "Status" }
@@ -98,10 +103,15 @@ pub fn AdminPostList() -> Element {
                                         td { Badge { tone: BadgeTone::Neutral, variant: BadgeVariant::Outlined, "{p.status}" } }
                                         td { class: "text-white/50", {p.published_at.as_deref().map(crate::model::fmt_date).unwrap_or_else(|| "—".into())} }
                                         td { class: "flex gap-3 py-2",
-                                            Link { to: Route::AdminPostEdit { id: p.id }, class: "text-brand-400 hover:underline", "Edit" }
                                             {
                                                 let pid = p.id;
                                                 rsx! {
+                                                    Button {
+                                                        variant: ButtonVariant::Outline,
+                                                        size: ButtonSize::Xs,
+                                                        onclick: move |_| { navigator().push(Route::AdminPostEdit { id: pid }); },
+                                                        "Edit"
+                                                    }
                                                     ActionButton {
                                                         label: "Delete".to_string(),
                                                         variant: ButtonVariant::Destructive,

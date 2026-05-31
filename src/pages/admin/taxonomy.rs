@@ -159,13 +159,13 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                                                     oninput: move |e: FormEvent| edit_name.set(e.value()),
                                                     onkeydown: move |e: KeyboardEvent| if e.key() == Key::Enter { save(()) },
                                                 }
-                                                Button { variant: ButtonVariant::Link, size: ButtonSize::Xs, onclick: move |_| save(()), "Save" }
+                                                Button { variant: ButtonVariant::Primary, size: ButtonSize::Xs, onclick: move |_| save(()), "Save" }
                                                 Button { variant: ButtonVariant::Ghost, size: ButtonSize::Xs, onclick: move |_| edit_id.set(None), "Cancel" }
                                             } else {
                                                 span { "{display}" }
                                                 div { class: "flex gap-2",
                                                     Button {
-                                                        variant: ButtonVariant::Ghost,
+                                                        variant: ButtonVariant::Outline,
                                                         size: ButtonSize::Xs,
                                                         onclick: move |_| { edit_name.set(display.clone()); edit_id.set(Some(id)); },
                                                         "Edit"

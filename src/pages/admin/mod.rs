@@ -138,7 +138,7 @@ pub(crate) type ActionFuture = Pin<Box<dyn Future<Output = Result<()>>>>;
 #[component]
 pub(crate) fn ActionButton(
     label: String,
-    #[props(default = ButtonVariant::Link)] variant: ButtonVariant,
+    #[props(default = ButtonVariant::Outline)] variant: ButtonVariant,
     on_done: EventHandler<()>,
     action: Callback<(), ActionFuture>,
 ) -> Element {

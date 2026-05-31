@@ -13,7 +13,7 @@ use crate::layouts::{
 };
 use crate::model::HomeLayout;
 use crate::pages::widgets::{
-    CategoryList, FeaturedPosts, FeedSection, FeedShape, RecentComments, TagList,
+    ArchiveLink, CategoryList, FeaturedPosts, FeedSection, FeedShape, RecentComments, TagList,
 };
 use crate::server::posts::list_posts;
 use crate::server::settings::get_home_layout;
@@ -43,6 +43,7 @@ pub fn HomePage() -> Element {
                 left: rsx! {
                     CategoryList {}
                     TagList {}
+                    ArchiveLink {}
                 },
                 right: rsx! {
                     FeaturedPosts {}
@@ -57,6 +58,7 @@ pub fn HomePage() -> Element {
                 nav: rsx! {
                     CategoryList {}
                     TagList {}
+                    ArchiveLink {}
                 },
                 PageTitle { "Latest posts" }
                 {body}
@@ -87,6 +89,7 @@ pub fn HomePage() -> Element {
                 nav: rsx! {
                     CategoryList {}
                     TagList {}
+                    ArchiveLink {}
                 },
                 PageTitle { "Latest posts" }
                 {body}
@@ -97,6 +100,7 @@ pub fn HomePage() -> Element {
                 panel: rsx! {
                     CategoryList {}
                     TagList {}
+                    ArchiveLink {}
                 },
                 PageTitle { "Latest posts" }
                 {body}

@@ -138,6 +138,21 @@ pub fn TagList() -> Element {
     }
 }
 
+/// Sidebar link to the Archive page, styled to match CategoryList / TagList.
+#[component]
+pub fn ArchiveLink() -> Element {
+    rsx! {
+        div { class: "mt-6 text-sm",
+            SectionTitle { tone: SectionTitleTone::Sidebar, "Archive" }
+            Link {
+                to: Route::Archive,
+                class: "text-white/60 hover:text-white hover:underline",
+                "All posts"
+            }
+        }
+    }
+}
+
 /// A single rounded tag chip. The active tag (the feed currently being viewed)
 /// is filled with the site accent — the `brand-*` palette driven by the
 /// user-set `--brand-hue`; the rest are subtle and pick up an accent tint on

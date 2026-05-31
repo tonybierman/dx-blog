@@ -18,6 +18,7 @@ use crate::components::alert_dialog::{
     AlertDialog, AlertDialogAction, AlertDialogActions, AlertDialogCancel, AlertDialogDescription,
     AlertDialogTitle,
 };
+use crate::components::breadcrumb::Breadcrumb;
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::text::ErrorText;
 
@@ -124,7 +125,10 @@ pub(crate) fn AdminShell(active: String, children: Element) -> Element {
                     }
                     Link { to: Route::HomePage, class: "mt-6 block text-xs text-white/40 hover:underline", "← Back to site" }
                 }
-                main { class: "flex-1 p-6", {children} }
+                main { class: "flex-1 p-6",
+                    Breadcrumb {}
+                    {children}
+                }
             }
         }
     }

@@ -19,7 +19,9 @@ use crate::components::textarea::Textarea;
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
 use crate::live::{use_live, LiveHandle};
 use crate::model::CommentView;
-use crate::pages::widgets::{CategoryList, FeedSection, FeedShape, ResponsiveImg, TagList};
+use crate::pages::widgets::{
+    ArchiveLink, CategoryList, FeedSection, FeedShape, ResponsiveImg, TagList,
+};
 use crate::server::authors::get_author_profile;
 use crate::server::comments::{create_comment, list_comments};
 use crate::server::posts::{get_post, list_archive, list_posts, posts_by_author};
@@ -36,7 +38,6 @@ pub fn PostDetail(slug: String) -> Element {
     rsx! {
         FullBleedLayout {
             div { class: "mx-auto max-w-3xl px-4 py-10",
-                Link { to: Route::HomePage, class: "text-sm text-white/50 hover:underline", "← Back" }
                 // The post (and its <head> tags) load inside a suspense boundary so
                 // the skeleton shows during client-side navigation, while the SSR
                 // pass still waits for the data — see `PostContent`.
@@ -169,6 +170,17 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
 
     rsx! {
         article {
+            nav { "aria-label": "breadcrumb", class: "mb-4",
+                ol { class: "flex items-center text-sm",
+                    li { class: "flex items-center",
+                        Link { to: Route::HomePage, class: "text-base-content/60 hover:text-base-content transition-colors", "Home" }
+                    }
+                    li { class: "flex items-center",
+                        span { "aria-hidden": "true", class: "mx-1.5 text-base-content/40 select-none", "›" }
+                        span { "aria-current": "page", class: "text-base-content font-medium", "{post.title}" }
+                    }
+                }
+            }
             if is_draft {
                 Alert { class: "mb-6".to_string(),
                     "Draft preview — this post is not published and is only visible to you."
@@ -555,7 +567,7 @@ pub fn CategoryFeed(slug: String) -> Element {
 
     rsx! {
         HolyGrailLayout {
-            left: rsx! { CategoryList {} TagList {} },
+            left: rsx! { CategoryList {} TagList {} ArchiveLink {} },
             PageTitle { "Category: {title}" }
             PaginatedFeed { category_slug: Some(slug.clone()), tag_slug: None }
         }
@@ -594,6 +606,7 @@ pub fn TagFeed(slug: String) -> Element {
             left: rsx! {
                 PageTitle { "#{title}" }
                 TagList {}
+                ArchiveLink {}
             },
             FeedSection { posts, shape: FeedShape::Bento, page }
         }
@@ -735,6 +748,7 @@ fn FacetMenu(
 pub fn SearchResults(q: String) -> Element {
     let mut query = use_signal(|| q.clone());
     let mut page = use_signal(|| 1i64);
+    let nav = use_navigator();
     // The query signal seeds from `?q=` at mount only; this page is reused when
     // the route param changes (e.g. a second search from the header), so without
     // this the input would keep showing the old term. Re-sync on every change and
@@ -820,7 +834,12 @@ pub fn SearchResults(q: String) -> Element {
                 class: "mb-6 w-full",
                 placeholder: "Search posts…",
                 value: "{query}",
-                oninput: move |e: FormEvent| { query.set(e.value()); page.set(1); },
+                oninput: move |e: FormEvent| {
+                    let val = e.value();
+                    query.set(val.clone());
+                    page.set(1);
+                    nav.push(crate::Route::SearchResults { q: val });
+                },
             }
             if let Some(Ok(feed)) = &*results.read() {
                 p { class: "mb-4 text-sm text-white/50", "{feed.total} result(s)" }

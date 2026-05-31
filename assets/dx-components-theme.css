@@ -21,6 +21,17 @@
   --secondary-color-2: var(--color-brand-500);
   --focused-border-color: var(--color-brand-500);
 
+  /* Destructive / danger accent (catalog Button variant=Destructive, input
+     aria-invalid borders/rings). arium ships --primary-error-color as a fixed
+     red that ignores --brand-hue, so delete buttons read as a stranger next to
+     the accent. Re-point it at the brand-sibling danger color: same oklch
+     lightness/chroma discipline as the brand scale, hue driven by --danger-hue
+     (defined in tailwind.css), which LEANS with --brand-hue inside the red band.
+     Retune the accent and the delete buttons move with it. The Tailwind red-*
+     utilities (error TEXT) are themed separately in tailwind.css off the same
+     --danger-hue, so every red surface stays in sync. */
+  --primary-error-color: oklch(68.5% 0.185 var(--danger-hue));
+
   /* Surface tone bridge.
    *
    * The catalog's surface backgrounds (dialog/select/dropdown panels, input

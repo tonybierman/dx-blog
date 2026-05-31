@@ -5,6 +5,8 @@ use dioxus_primitives::merge_attributes;
 #[css_module("/src/components/button/style.css")]
 struct Styles;
 
+// Full catalog vocabulary — not every variant is used at a call site yet.
+#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub enum ButtonVariant {
@@ -30,6 +32,7 @@ impl ButtonVariant {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub enum ButtonSize {

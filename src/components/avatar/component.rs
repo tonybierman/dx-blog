@@ -6,6 +6,8 @@ use dioxus_primitives::merge_attributes;
 #[css_module("/src/components/avatar/style.css")]
 struct Styles;
 
+// Full catalog vocabulary — not every variant is used at a call site yet.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Default)]
 pub enum AvatarImageSize {
     #[default]
@@ -24,6 +26,7 @@ impl AvatarImageSize {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Default)]
 pub enum AvatarShape {
     #[default]

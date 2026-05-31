@@ -3,6 +3,8 @@ use dioxus::prelude::*;
 #[css_module("/src/components/textarea/style.css")]
 struct Styles;
 
+// Full catalog vocabulary — not every variant is used at a call site yet.
+#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub enum TextareaVariant {

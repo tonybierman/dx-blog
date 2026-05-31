@@ -5,8 +5,6 @@ use dioxus_primitives::select::{
 };
 use dioxus_primitives::{dioxus_attributes::attributes, merge_attributes};
 
-pub use dioxus_primitives::select::SelectGroup;
-
 #[css_module("/src/components/select/style.css")]
 struct Styles;
 

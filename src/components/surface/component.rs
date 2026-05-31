@@ -67,6 +67,8 @@ pub fn Panel(
     rsx! { div { class: "{full}", {children} } }
 }
 
+// Full semantic palette — not every tone is used at a call site yet.
+#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Default)]
 pub enum AlertTone {
     #[default]
@@ -108,6 +110,7 @@ pub fn Alert(
 // Full semantic palette: some tones aren't used at a call site yet, but the
 // complete set is what keeps the badge vocabulary consistent and grep-able
 // (mirrors AlertTone above, which carries the same not-all-used tone set).
+#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Default)]
 pub enum BadgeTone {
     #[default]
@@ -183,6 +186,7 @@ pub fn Badge(
 }
 
 // Full semantic palette — see BadgeTone above; mirrored for consistency.
+#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Default)]
 pub enum StatusDotTone {
     #[default]

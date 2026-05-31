@@ -145,9 +145,9 @@ pub fn TagList() -> Element {
 #[component]
 fn TagPill(name: String, slug: String, active: bool) -> Element {
     let class = if active {
-        "rounded-full border border-brand-500 bg-brand-500 px-3.5 py-1.5 font-medium text-white shadow-sm shadow-brand-500/30"
+        "rounded-lg border border-brand-500 bg-brand-500 px-3.5 py-1.5 font-medium text-white shadow-sm shadow-brand-500/30"
     } else {
-        "rounded-full border border-white/10 bg-white/[0.06] px-3.5 py-1.5 text-white/70 transition-colors hover:border-brand-400/40 hover:bg-white/10 hover:text-white"
+        "rounded-lg border border-white/10 bg-white/[0.06] px-3.5 py-1.5 text-white/70 transition-colors hover:border-brand-400/40 hover:bg-white/10 hover:text-white"
     };
     rsx! {
         Link { to: Route::TagFeed { slug }, class, "{name}" }
@@ -356,7 +356,7 @@ pub fn PostCardSkeleton() -> Element {
     let surface = panel_class(PanelVariant::Bleed, PanelPadding::None);
     rsx! {
         article { class: "{surface}",
-            Skeleton { style: "height: 10rem; width: 100%; border-radius: 0;" }
+            Skeleton { style: "height: 10rem; width: 100%; border-radius: 0.5rem;" }
             div { class: "space-y-3 p-4",
                 Skeleton { style: "height: 0.75rem; width: 4rem;" }
                 Skeleton { style: "height: 1.25rem; width: 80%;" }

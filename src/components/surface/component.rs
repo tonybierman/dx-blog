@@ -2,12 +2,12 @@ use dioxus::prelude::*;
 
 #[derive(Copy, Clone, PartialEq, Default)]
 pub enum PanelVariant {
-    /// `rounded-xl border-white/10 bg-white/[0.03]` — filled marketing/dashboard surface.
+    /// `rounded-lg border-white/10 bg-white/[0.03]` — filled marketing/dashboard surface.
     #[default]
     Filled,
     /// `rounded-lg border-white/10` — outlined list-row card, no fill.
     Outlined,
-    /// `rounded-xl border-white/10 bg-white/[0.03] overflow-hidden` — filled with image bleed,
+    /// `rounded-lg border-white/10 bg-white/[0.03] overflow-hidden` — filled with image bleed,
     /// internal padding is the caller's responsibility.
     Bleed,
 }
@@ -36,9 +36,9 @@ impl PanelPadding {
 /// Use this for call sites that need a non-`<div>` element (e.g. `<article>`).
 pub fn panel_class(variant: PanelVariant, padding: PanelPadding) -> String {
     let base = match variant {
-        PanelVariant::Filled => "rounded-xl border border-white/10 bg-white/[0.03]",
+        PanelVariant::Filled => "rounded-lg border border-white/10 bg-white/[0.03]",
         PanelVariant::Outlined => "rounded-lg border border-white/10",
-        PanelVariant::Bleed => "overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]",
+        PanelVariant::Bleed => "overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]",
     };
     let pad = padding.class();
     if pad.is_empty() {
@@ -173,7 +173,7 @@ pub fn Badge(
     };
     // inline-flex is needed when a dot is present; harmless otherwise.
     let full =
-        format!("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs {tone_classes}");
+        format!("inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-xs {tone_classes}");
     let dot_class = tone.dot_class();
     rsx! {
         span { class: "{full}",

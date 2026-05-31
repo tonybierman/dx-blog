@@ -34,13 +34,13 @@ body {
 }
 .prose pre {
     background: #11151c; border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px; padding: 1em; overflow-x: auto; margin: 1em 0;
+    border-radius: 0.5rem; padding: 1em; overflow-x: auto; margin: 1em 0;
 }
 .prose code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
 .prose :not(pre) > code {
-    background: rgba(255, 255, 255, 0.08); padding: 0.1em 0.35em; border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08); padding: 0.1em 0.35em; border-radius: 0.5rem;
 }
-.prose img { max-width: 100%; border-radius: 8px; }
+.prose img { max-width: 100%; border-radius: 0.5rem; }
 .prose table { border-collapse: collapse; margin: 1em 0; }
 .prose th, .prose td { border: 1px solid rgba(255, 255, 255, 0.15); padding: 0.4em 0.7em; }
 
@@ -67,7 +67,7 @@ body {
     margin-top: 20px;
     margin: 10px 0px;
     border: white 1px solid;
-    border-radius: 5px;
+    border-radius: 0.5rem;
     padding: 10px;
 }
 
@@ -116,7 +116,7 @@ body {
     margin-top: 50px;
     background-color: #1e222d;
     padding: 20px;
-    border-radius: 10px;
+    border-radius: 0.5rem;
 }
 
 #echo>h4 {

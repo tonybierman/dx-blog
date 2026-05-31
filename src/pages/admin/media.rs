@@ -64,7 +64,7 @@ pub fn AdminMedia() -> Element {
                     div { class: "columns-2 gap-4 md:columns-3 lg:columns-4",
                         for m in list {
                             Panel { key: "{m.id}", variant: PanelVariant::Outlined, padding: PanelPadding::Sm, class: "mb-4 inline-block w-full break-inside-avoid".to_string(),
-                                img { class: "w-full rounded", src: "{m.url}", alt: "{m.filename}" }
+                                img { class: "w-full rounded-lg", src: "{m.url}", alt: "{m.filename}" }
                                 div { class: "mt-1 flex items-center justify-between gap-2",
                                     button {
                                         class: "truncate text-left text-xs text-white/60 hover:text-white",

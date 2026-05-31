@@ -172,7 +172,7 @@ pre.syn[data-lang]::before {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: #8a94a3;
   background: #1f242d;
-  border-bottom-left-radius: 6px;
+  border-bottom-left-radius: 0.5rem;
   text-transform: lowercase;
   letter-spacing: 0.04em;
   pointer-events: none;

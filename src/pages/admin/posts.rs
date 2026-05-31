@@ -48,7 +48,7 @@ pub fn AdminPostList() -> Element {
         AdminShell { active: "posts".to_string(),
             div { class: "mb-6 flex items-center justify-between",
                 PageTitle { mb: Mb::None, "Posts" }
-                Link { to: Route::AdminPostNew, class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", "New post" }
+                Link { to: Route::AdminPostNew, class: "rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", "New post" }
             }
             div { class: "mb-4 flex items-center gap-3 text-sm",
                 label { class: "text-white/50", "Status" }
@@ -279,10 +279,10 @@ fn EditorForm(initial: PostEditData) -> Element {
                         }
                     }
                     if !featured_preview().trim().is_empty() {
-                        img { class: "h-24 rounded border border-white/10 object-cover", src: "{featured_preview}", alt: "Featured preview" }
+                        img { class: "h-24 rounded-lg border border-white/10 object-cover", src: "{featured_preview}", alt: "Featured preview" }
                     }
                     if show_media_picker() {
-                        div { class: "rounded border border-white/10 bg-white/[0.03] p-2",
+                        div { class: "rounded-lg border border-white/10 bg-white/[0.03] p-2",
                             match &*media.read() {
                                 Some(Ok(list)) if !list.is_empty() => rsx! {
                                     div { class: "grid max-h-48 grid-cols-4 gap-2 overflow-y-auto sm:grid-cols-6",
@@ -293,7 +293,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                                                     button {
                                                         key: "{m.id}",
                                                         r#type: "button",
-                                                        class: "overflow-hidden rounded border border-white/10 hover:border-brand-400",
+                                                        class: "overflow-hidden rounded-lg border border-white/10 hover:border-brand-400",
                                                         title: "{m.filename}",
                                                         onclick: move |_| { featured.set(url.clone()); featured_preview.set(url.clone()); show_media_picker.set(false); },
                                                         img { class: "h-16 w-full object-cover", src: "{m.url}", alt: "{m.filename}" }
@@ -392,7 +392,7 @@ fn EditorForm(initial: PostEditData) -> Element {
             // Right: live preview
             div {
                 Eyebrow { r#as: EyebrowAs::Div, size: EyebrowSize::Sm, mb: Mb::Mb2, "Preview" }
-                div { class: "prose max-w-none rounded border border-white/10 p-4",
+                div { class: "prose max-w-none rounded-lg border border-white/10 p-4",
                     {render_preview()}
                 }
             }

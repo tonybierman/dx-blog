@@ -104,9 +104,9 @@ fn ThemeSelector() -> Element {
                         key: "{name}",
                         r#type: "button",
                         class: if hue() == h {
-                            "flex items-center gap-1.5 rounded-full border border-white/50 px-3 py-1 text-xs"
+                            "flex items-center gap-1.5 rounded-lg border border-white/50 px-3 py-1 text-xs"
                         } else {
-                            "flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1 text-xs hover:border-white/40"
+                            "flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1 text-xs hover:border-white/40"
                         },
                         onclick: move |_| {
                             preview_hue(hue, h);
@@ -206,7 +206,7 @@ fn layout_thumb(layout: HomeLayout) -> Element {
     const CELL: &str = "bg-brand-500/50";
     const MUTED: &str = "bg-white/10";
     const FRAME: &str =
-        "flex h-16 w-24 flex-col gap-0.5 overflow-hidden rounded border border-white/10 bg-black/30 p-1";
+        "flex h-16 w-24 flex-col gap-0.5 overflow-hidden rounded-lg border border-white/10 bg-black/30 p-1";
 
     match layout {
         HomeLayout::HolyGrail => rsx! {
@@ -246,7 +246,7 @@ fn layout_thumb(layout: HomeLayout) -> Element {
             div { class: "relative {FRAME}",
                 div { class: "h-1.5 {BAR}" }
                 div { class: "flex-1 {CELL}" }
-                div { class: "absolute inset-y-1 left-1 w-3 rounded-sm bg-white/40" }
+                div { class: "absolute inset-y-1 left-1 w-3 rounded-lg bg-white/40" }
             }
         },
         HomeLayout::MegaMenu => rsx! {

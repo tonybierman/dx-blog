@@ -133,7 +133,7 @@ fn PostDetailSkeleton() -> Element {
     use arium_dioxus::ui::components::skeleton::Skeleton;
     rsx! {
         div { class: "mt-8 space-y-4",
-            Skeleton { style: "height: 16rem; width: 100%; border-radius: 0.75rem;" }
+            Skeleton { style: "height: 16rem; width: 100%; border-radius: 0.5rem;" }
             Skeleton { style: "height: 2rem; width: 70%;" }
             Skeleton { style: "height: 1rem; width: 12rem;" }
             div { class: "mt-6 space-y-3",
@@ -178,7 +178,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                 ResponsiveImg {
                     src: img,
                     alt: post.title.clone(),
-                    class: "mb-6 max-h-96 w-full rounded-xl object-cover".to_string(),
+                    class: "mb-6 max-h-96 w-full rounded-lg object-cover".to_string(),
                     sizes: "(max-width: 768px) 100vw, 768px".to_string(),
                     srcset_webp: post.featured_srcset_webp.clone(),
                     srcset_avif: post.featured_srcset_avif.clone(),
@@ -191,7 +191,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                 ResourceGate { kind: "post", id: post.id, min_role: ResourceRole::Editor,
                     Link {
                         to: Route::AdminPostEdit { id: post.id },
-                        class: "shrink-0 rounded border border-white/15 px-2 py-1 text-sm text-white/70 hover:bg-white/5",
+                        class: "shrink-0 rounded-lg border border-white/15 px-2 py-1 text-sm text-white/70 hover:bg-white/5",
                         "Edit"
                     }
                 }

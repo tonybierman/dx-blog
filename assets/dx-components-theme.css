@@ -20,4 +20,27 @@
      moves together. */
   --secondary-color-2: var(--color-brand-500);
   --focused-border-color: var(--color-brand-500);
+
+  /* Surface tone bridge.
+   *
+   * The catalog's surface backgrounds (dialog/select/dropdown panels, input
+   * fills, hover rows) all read from --primary-color-* . arium ships those as
+   * pure NEUTRAL grays (#0e0e0e … #3e3e3e, chroma ≈ 0), but the blog's body is
+   * a cool blue-black (#0f1116, oklch hue ≈ 265) and its own surfaces are
+   * cool-tinted (bg-white/[0.03] over that body). Side by side the neutral
+   * catalog panels read visibly warmer than everything around them.
+   *
+   * Re-point the surface ramp at the app's tone: keep arium's designed
+   * lightness steps (so contrast/affordances are unchanged) and add the blog's
+   * cool tint via one knob. --surface-hue matches the body, NOT --brand-hue —
+   * these are neutral chrome, not the accent, so they track the page tone and
+   * stay put when the accent hue is retuned. */
+  --surface-hue: 265;
+  --primary-color-1: oklch(16.4% 0.013 var(--surface-hue));
+  --primary-color-2: oklch(14.5% 0.013 var(--surface-hue));
+  --primary-color-3: oklch(18.8% 0.014 var(--surface-hue));
+  --primary-color-4: oklch(21.8% 0.015 var(--surface-hue));
+  --primary-color-5: oklch(26.9% 0.016 var(--surface-hue));
+  --primary-color-6: oklch(25.6% 0.016 var(--surface-hue));
+  --primary-color-7: oklch(36.4% 0.016 var(--surface-hue));
 }

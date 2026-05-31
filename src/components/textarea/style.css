@@ -29,12 +29,17 @@
 /* Default Variant */
 .dx-textarea[data-style="default"] {
   background: var(--light, var(--primary-color)) var(--dark, var(--primary-color-3));
-  box-shadow: inset 0 0 0 1px var(--light, var(--primary-color-6)) var(--dark, var(--primary-color-7));
+  box-shadow: inset 0 0 0 1px var(--secondary-color-6);
 }
 
-.dx-textarea[data-style="default"]:hover:not(:disabled),
+.dx-textarea[data-style="default"]:hover:not(:disabled) {
+  background: var(--light, var(--primary-color-4)) var(--dark, var(--primary-color-5));
+  color: var(--secondary-color-1);
+}
+
 .dx-textarea[data-style="default"]:focus {
   background: var(--light, var(--primary-color-4)) var(--dark, var(--primary-color-5));
+  box-shadow: inset 0 0 0 1px var(--focused-border-color);
   color: var(--secondary-color-1);
 }
 

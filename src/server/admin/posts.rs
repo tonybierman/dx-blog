@@ -53,15 +53,16 @@ fn validate_featured_image(url: &Option<String>) -> std::result::Result<(), Serv
 /// Create a post. Requires the `posts:write` capability; the creator becomes
 /// the post's resource Owner.
 #[post("/api/posts/create", auth: arium_dioxus::auth::Session, db: DbExtension)]
-pub async fn create_post(
-    title: String,
-    body_md: String,
-    excerpt: String,
-    category_id: Option<i64>,
-    tag_ids: Vec<i64>,
-    featured_image_url: Option<String>,
-    status: String,
-) -> Result<i64> {
+pub async fn create_post(input: crate::model::PostInput) -> Result<i64> {
+    let crate::model::PostInput {
+        title,
+        body_md,
+        excerpt,
+        category_id,
+        tag_ids,
+        featured_image_url,
+        status,
+    } = input;
     let uid = require_perm(&auth, POSTS_WRITE)?;
     validate_status(&status)?;
     validate_featured_image(&featured_image_url)?;
@@ -116,16 +117,16 @@ pub async fn create_post(
 
 /// Update an existing post (Editor on the post, or admin token).
 #[post("/api/posts/update", auth: arium_dioxus::auth::Session, db: DbExtension, authority: arium_dioxus::ResourceAuthorityExt)]
-pub async fn update_post(
-    id: i64,
-    title: String,
-    body_md: String,
-    excerpt: String,
-    category_id: Option<i64>,
-    tag_ids: Vec<i64>,
-    featured_image_url: Option<String>,
-    status: String,
-) -> Result<()> {
+pub async fn update_post(id: i64, input: crate::model::PostInput) -> Result<()> {
+    let crate::model::PostInput {
+        title,
+        body_md,
+        excerpt,
+        category_id,
+        tag_ids,
+        featured_image_url,
+        status,
+    } = input;
     can_edit_post(&auth, &db.0, &authority, id).await?;
     validate_status(&status)?;
     validate_featured_image(&featured_image_url)?;

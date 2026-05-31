@@ -232,13 +232,20 @@ fn EditorForm(initial: PostEditData) -> Element {
         let st = status();
         let tag_ids = selected_tags();
         let feat = if f.trim().is_empty() { None } else { Some(f) };
+        let input = crate::model::PostInput {
+            title: t,
+            body_md: b,
+            excerpt: ex,
+            category_id: cat,
+            tag_ids,
+            featured_image_url: feat,
+            status: st,
+        };
         spawn(async move {
             let result = if editing {
-                update_post(post_id, t, b, ex, cat, tag_ids, feat, st)
-                    .await
-                    .map(|_| post_id)
+                update_post(post_id, input).await.map(|_| post_id)
             } else {
-                create_post(t, b, ex, cat, tag_ids, feat, st).await
+                create_post(input).await
             };
             match result {
                 Ok(_) => {

@@ -276,6 +276,20 @@ pub struct PostEditData {
     pub tag_ids: Vec<i64>,
 }
 
+/// Editable fields submitted when creating or updating a post. Bundles the
+/// form's seven fields into one payload so the create/update server fns take a
+/// single argument instead of a long, easy-to-misorder positional list.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Default)]
+pub struct PostInput {
+    pub title: String,
+    pub body_md: String,
+    pub excerpt: String,
+    pub category_id: Option<i64>,
+    pub tag_ids: Vec<i64>,
+    pub featured_image_url: Option<String>,
+    pub status: String,
+}
+
 /// A page of post cards plus the total count, for offset pagination.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Default)]
 pub struct PostFeed {

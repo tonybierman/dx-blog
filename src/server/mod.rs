@@ -69,7 +69,7 @@ pub fn require_perm(
         .filter(|u| !u.anonymous)
         .ok_or_else(|| ServerFnError::new("Not signed in."))?;
     if user.permissions.contains(token) {
-        Ok(user.id as i64)
+        Ok(user.id)
     } else {
         Err(ServerFnError::new(
             "You don't have permission for this action.",

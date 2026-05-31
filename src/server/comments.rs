@@ -85,7 +85,7 @@ pub async fn create_comment(
         .current_user
         .as_ref()
         .filter(|u| !u.anonymous)
-        .map(|u| u.id as i64);
+        .map(|u| u.id);
 
     let (author_id, gname, gemail) = match user {
         Some(uid) => (Some(uid), None, None),

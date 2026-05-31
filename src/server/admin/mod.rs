@@ -36,7 +36,7 @@ pub(crate) async fn can_edit_post(
         .current_user
         .as_ref()
         .filter(|u| !u.anonymous)
-        .map(|u| u.id as i64)
+        .map(|u| u.id)
         .ok_or_else(|| ServerFnError::new("Not signed in."))?;
     arium_dioxus::require_resource_or_permission(
         authority.0.as_ref(),

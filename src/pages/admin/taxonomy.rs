@@ -12,7 +12,7 @@ use crate::server::admin::{
 };
 use crate::server::taxonomy::{list_categories, list_tags};
 
-use super::AdminShell;
+use super::{ActionButton, ActionFuture, AdminShell};
 
 #[component]
 pub fn AdminTaxonomy() -> Element {
@@ -120,6 +120,13 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                             for (id, name) in list {
                                 {
                                     let display = name.clone();
+                                    let confirm_msg = format!(
+                                        "Delete \u{201c}{display}\u{201d}? Posts using it will lose this {label}.",
+                                        label = match kind {
+                                            TaxKind::Category => "category",
+                                            TaxKind::Tag => "tag",
+                                        }
+                                    );
                                     let save = move |_| {
                                         spawn(async move {
                                             let new = edit_name().trim().to_string();
@@ -134,18 +141,6 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                                             };
                                             match res {
                                                 Ok(()) => { edit_id.set(None); err.set(String::new()); items.restart(); }
-                                                Err(e) => err.set(arium_dioxus::friendly_server_error(e)),
-                                            }
-                                        });
-                                    };
-                                    let del = move |_| {
-                                        spawn(async move {
-                                            let res = match kind {
-                                                TaxKind::Category => delete_category(id).await,
-                                                TaxKind::Tag => delete_tag(id).await,
-                                            };
-                                            match res {
-                                                Ok(()) => items.restart(),
                                                 Err(e) => err.set(arium_dioxus::friendly_server_error(e)),
                                             }
                                         });
@@ -170,7 +165,18 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                                                         onclick: move |_| { edit_name.set(display.clone()); edit_id.set(Some(id)); },
                                                         "Edit"
                                                     }
-                                                    Button { variant: ButtonVariant::Destructive, size: ButtonSize::Xs, onclick: del, "Delete" }
+                                                    ActionButton {
+                                                        label: "Delete".to_string(),
+                                                        variant: ButtonVariant::Destructive,
+                                                        confirm: Some(confirm_msg),
+                                                        on_done: move |_| items.restart(),
+                                                        action: move |_| Box::pin(async move {
+                                                            match kind {
+                                                                TaxKind::Category => delete_category(id).await,
+                                                                TaxKind::Tag => delete_tag(id).await,
+                                                            }
+                                                        }) as ActionFuture,
+                                                    }
                                                 }
                                             }
                                         }

@@ -31,6 +31,28 @@
   --color-brand-900: oklch(37.9% 0.085 var(--brand-hue));
   --color-brand-950: oklch(28.2% 0.060 var(--brand-hue));
 
+  /* Destructive / danger scale (delete buttons, error text).
+   *
+   * Tailwind's stock `red-*` is hue-locked at ~22° with much louder chroma than
+   * the accent, so next to the brand-themed UI it reads as a stranger. Rebuild
+   * it as a SIBLING of the brand scale instead:
+   *   - lightness is matched step-for-step to brand-200/300/400/500, so the two
+   *     ramps sit at the same tone;
+   *   - chroma tracks brand's per-step chroma + a small bump, so danger still
+   *     reads a touch hotter (it should) without shouting;
+   *   - hue runs through `--danger-hue`, which LEANS with the accent. It's not a
+   *     free 180° complement — a danger color must always read as red — but a
+   *     clamped pull off `--brand-hue`: a cool accent nudges the red toward
+   *     crimson, a warm accent toward orange-red, always inside the 15–38° red
+   *     band. Retune --brand-hue and the delete buttons move with everything.
+   *
+   * Only the steps actually used by the UI (200/300/400/500) are overridden. */
+  --danger-hue: clamp(15, calc(var(--brand-hue) * 0.08 + 7), 38);
+  --color-red-200: oklch(88.5% 0.065 var(--danger-hue));
+  --color-red-300: oklch(82.8% 0.105 var(--danger-hue));
+  --color-red-400: oklch(74.6% 0.155 var(--danger-hue));
+  --color-red-500: oklch(68.5% 0.185 var(--danger-hue));
+
   /* Typeface knob — swap the stack to re-font the whole blog. */
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 }

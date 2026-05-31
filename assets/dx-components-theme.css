@@ -1,0 +1,23 @@
+/* App theme bridge for the dioxus-components catalog.
+ *
+ * The base catalog tokens (--primary-color-*, --secondary-color-*, etc.) ship in
+ * arium's DEFAULT_THEME_CSS, which is loaded BEFORE this file. This file is the
+ * thin override layer (loaded last, so it wins) — it must never hard-code a
+ * component color; it only re-points catalog tokens at the app's theme so the
+ * whole UI re-themes from one place.
+ */
+:root {
+  /* The blog is dark-only and never sets html[data-theme], so the catalog's
+     light/dark switch would otherwise follow the OS. Pin it to dark via the
+     token mechanism (these are the switch's sentinels, not colors). */
+  --dark: initial;
+  --light: ;
+
+  /* Route the catalog's accent / focus tokens through the app's brand palette
+     (--color-brand-*, itself driven by --brand-hue from tailwind.css). This is
+     what makes primary buttons, link-variant text, focus rings, and select
+     active/check states follow the site accent — change --brand-hue and it all
+     moves together. */
+  --secondary-color-2: var(--color-brand-500);
+  --focused-border-color: var(--color-brand-500);
+}

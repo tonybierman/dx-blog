@@ -4,6 +4,9 @@
 
 use dioxus::prelude::*;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::input::Input;
+use crate::components::text::{ErrorText, PageTitle, SectionTitle};
 use crate::server::admin::{
     create_category, create_tag, delete_category, delete_tag, rename_category, rename_tag,
 };
@@ -15,7 +18,7 @@ use super::AdminShell;
 pub fn AdminTaxonomy() -> Element {
     rsx! {
         AdminShell { active: "taxonomy".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Taxonomy" }
+            PageTitle { "Taxonomy" }
             div { class: "grid gap-8 md:grid-cols-2",
                 TaxonomyEditor { kind: TaxKind::Category }
                 TaxonomyEditor { kind: TaxKind::Tag }
@@ -95,19 +98,19 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
 
     rsx! {
         section {
-            h2 { class: "mb-3 text-lg font-semibold", "{kind.title()}" }
+            SectionTitle { "{kind.title()}" }
             div { class: "mb-3 flex gap-2",
-                input {
-                    class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                Input {
+                    class: "flex-1",
                     placeholder: "{kind.placeholder()}",
                     value: "{new_name}",
-                    oninput: move |e| new_name.set(e.value()),
-                    onkeydown: move |e| if e.key() == Key::Enter { add(()) },
+                    oninput: move |e: FormEvent| new_name.set(e.value()),
+                    onkeydown: move |e: KeyboardEvent| if e.key() == Key::Enter { add(()) },
                 }
-                button { class: "rounded bg-brand-600 px-3 text-sm", onclick: move |_| add(()), "Add" }
+                Button { variant: ButtonVariant::Primary, size: ButtonSize::Sm, onclick: move |_| add(()), "Add" }
             }
             if !err().is_empty() {
-                p { class: "mb-2 text-xs text-red-400", "{err}" }
+                ErrorText { class: "mb-2 text-xs".to_string(), "{err}" }
             }
             match &*items.read() {
                 Some(Ok(list)) if !list.is_empty() => {
@@ -150,23 +153,24 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                                     rsx! {
                                         li { key: "{id}", class: "flex items-center justify-between gap-2",
                                             if edit_id() == Some(id) {
-                                                input {
-                                                    class: "flex-1 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                                                Input {
+                                                    class: "flex-1",
                                                     value: "{edit_name}",
-                                                    oninput: move |e| edit_name.set(e.value()),
-                                                    onkeydown: move |e| if e.key() == Key::Enter { save(()) },
+                                                    oninput: move |e: FormEvent| edit_name.set(e.value()),
+                                                    onkeydown: move |e: KeyboardEvent| if e.key() == Key::Enter { save(()) },
                                                 }
-                                                button { class: "text-xs text-brand-400 hover:underline", onclick: move |_| save(()), "Save" }
-                                                button { class: "text-xs text-white/50 hover:underline", onclick: move |_| edit_id.set(None), "Cancel" }
+                                                Button { variant: ButtonVariant::Link, size: ButtonSize::Xs, onclick: move |_| save(()), "Save" }
+                                                Button { variant: ButtonVariant::Ghost, size: ButtonSize::Xs, onclick: move |_| edit_id.set(None), "Cancel" }
                                             } else {
                                                 span { "{display}" }
                                                 div { class: "flex gap-2",
-                                                    button {
-                                                        class: "text-xs text-white/60 hover:underline",
+                                                    Button {
+                                                        variant: ButtonVariant::Ghost,
+                                                        size: ButtonSize::Xs,
                                                         onclick: move |_| { edit_name.set(display.clone()); edit_id.set(Some(id)); },
                                                         "Edit"
                                                     }
-                                                    button { class: "text-xs text-red-400 hover:underline", onclick: del, "Delete" }
+                                                    Button { variant: ButtonVariant::Destructive, size: ButtonSize::Xs, onclick: del, "Delete" }
                                                 }
                                             }
                                         }
@@ -177,7 +181,7 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                     }
                 }
                 Some(Ok(_)) => rsx! { p { class: "text-sm text-white/40", "None yet." } },
-                Some(Err(e)) => rsx! { p { class: "text-sm text-red-400", "{e}" } },
+                Some(Err(e)) => rsx! { ErrorText { small: true, "{e}" } },
                 None => rsx! { p { class: "text-sm text-white/50", "Loading…" } },
             }
         }

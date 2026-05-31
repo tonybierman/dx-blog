@@ -11,6 +11,8 @@ use dioxus::prelude::*;
 use arium_dioxus::server::logout;
 use arium_dioxus::ui::use_permissions;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::navbar::{Navbar, NavbarContent, NavbarItem, NavbarNav, NavbarTrigger};
 use crate::model::SiteMeta;
 use crate::server::settings::DEFAULT_SITE_TITLE;
 use crate::Route;
@@ -54,35 +56,59 @@ pub fn SiteHeader() -> Element {
 
     rsx! {
         header { class: "w-full border-b border-white/10 bg-black/20 backdrop-blur",
-            nav { class: "mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3",
+            div { class: "mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3",
                 Link { to: Route::HomePage, class: "flex items-baseline gap-2",
                     span { class: "text-lg font-semibold tracking-tight", "{title}" }
                     if let Some(tagline) = tagline {
                         span { class: "hidden text-sm text-white/40 sm:inline", "{tagline}" }
                     }
                 }
-                div { class: "flex items-center gap-4 text-sm",
-                    Link { to: Route::HomePage, class: "hover:underline", "Home" }
-                    Link { to: Route::Archive, class: "hover:underline", "Archive" }
-                    Link { to: Route::SearchResults { q: String::new() }, class: "hover:underline", "Search" }
+                // Catalog menubar: flat top-level links plus a dropdown for the
+                // signed-in account actions (keyboard-navigable, themed via the
+                // dx-components tokens).
+                Navbar { aria_label: "Primary",
+                    NavbarItem { index: 0usize, value: "home".to_string(), to: Route::HomePage, "Home" }
+                    NavbarItem { index: 1usize, value: "archive".to_string(), to: Route::Archive, "Archive" }
+                    NavbarItem {
+                        index: 2usize,
+                        value: "search".to_string(),
+                        to: Route::SearchResults { q: String::new() },
+                        "Search"
+                    }
                     if authed {
                         if let Some(route) = admin_route.clone() {
-                            Link { to: route, class: "hover:underline", "Admin" }
+                            NavbarItem { index: 3usize, value: "admin".to_string(), to: route, "Admin" }
                         }
-                        Link { to: Route::AccountPage, class: "hover:underline", "{name}" }
-                        button {
-                            class: "rounded border border-white/15 px-2 py-1 hover:bg-white/5",
-                            onclick: move |_| {
-                                spawn(async move {
-                                    let _ = logout().await;
-                                    perms.refresh();
-                                    navigator().push(Route::HomePage);
-                                });
-                            },
-                            "Sign out"
+                        NavbarNav { index: 4usize,
+                            NavbarTrigger { "{name}" }
+                            NavbarContent {
+                                NavbarItem {
+                                    index: 0usize,
+                                    value: "account".to_string(),
+                                    to: Route::AccountPage,
+                                    "Account"
+                                }
+                                NavbarItem {
+                                    index: 1usize,
+                                    value: "signout".to_string(),
+                                    to: Route::HomePage,
+                                    onclick: move |_| {
+                                        spawn(async move {
+                                            let _ = logout().await;
+                                            perms.refresh();
+                                        });
+                                    },
+                                    "Sign out"
+                                }
+                            }
                         }
                     } else {
-                        Link { to: Route::LoginPage, class: "hover:underline", "Sign in" }
+                        NavbarItem {
+                            index: 3usize,
+                            value: "signin".to_string(),
+                            to: Route::LoginPage,
+                            "Sign in"
+                        }
                     }
                 }
             }
@@ -113,20 +139,26 @@ pub fn HolyGrailLayout(
     #[props(optional)] right: Option<Element>,
     children: Element,
 ) -> Element {
+    // Only reserve a sidebar track when that slot is actually filled, so a page
+    // using one sidebar (e.g. search → right only) lets the main column claim
+    // the freed space instead of leaving a dead gutter.
+    let cols = match (left.is_some(), right.is_some()) {
+        (true, true) => "md:grid-cols-[200px_1fr_240px]",
+        (true, false) => "md:grid-cols-[200px_1fr]",
+        (false, true) => "md:grid-cols-[1fr_240px]",
+        (false, false) => "md:grid-cols-[1fr]",
+    };
     rsx! {
         div { class: "flex min-h-screen flex-col",
             SiteHeader {}
-            div { class: "mx-auto grid w-full max-w-6xl flex-1 gap-6 px-4 py-6 md:grid-cols-[200px_1fr_240px]",
+            div {
+                class: "mx-auto grid w-full max-w-6xl flex-1 gap-6 px-4 py-6 {cols}",
                 if let Some(left) = left {
                     aside { class: "hidden md:block", {left} }
-                } else {
-                    aside { class: "hidden md:block" }
                 }
                 main { class: "min-w-0", {children} }
                 if let Some(right) = right {
                     aside { class: "hidden md:block", {right} }
-                } else {
-                    aside { class: "hidden md:block" }
                 }
             }
             SiteFooter {}
@@ -218,8 +250,9 @@ pub fn DrawerLayout(nav: Element, children: Element) -> Element {
         div { class: "relative flex min-h-screen flex-col",
             SiteHeader {}
             div { class: "flex items-center gap-3 border-b border-white/10 px-4 py-2",
-                button {
-                    class: "rounded border border-white/15 px-2 py-1 text-lg leading-none hover:bg-white/5",
+                Button {
+                    variant: ButtonVariant::Outline,
+                    size: ButtonSize::Icon,
                     onclick: move |_| open.set(!open()),
                     "\u{2630}"
                 }
@@ -256,8 +289,9 @@ pub fn MegaMenuLayout(panel: Element, children: Element) -> Element {
             header { class: "relative border-b border-white/10",
                 nav { class: "mx-auto flex max-w-6xl items-center gap-6 px-4 py-3",
                     span { class: "font-semibold", "Explore" }
-                    button {
-                        class: "text-sm text-white/70 hover:text-white",
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
                         onclick: move |_| open.set(!open()),
                         "Browse ▾"
                     }

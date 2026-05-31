@@ -2,6 +2,8 @@
 
 use dioxus::prelude::*;
 
+use crate::components::text::PageTitle;
+
 use super::AdminShell;
 
 #[component]
@@ -9,7 +11,7 @@ pub fn AdminUsers() -> Element {
     let mut selected = use_signal::<Option<i64>>(|| None);
     rsx! {
         AdminShell { active: "users".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "User management" }
+            PageTitle { "User management" }
             if let Some(uid) = selected() {
                 arium_dioxus::ui::AdminUserDetail { user_id: uid, on_back: move |_| selected.set(None) }
             } else {

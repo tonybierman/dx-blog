@@ -4,6 +4,12 @@ use dioxus::prelude::*;
 use dioxus_sdk_time::use_debounce;
 use std::time::Duration;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::input::Input;
+use crate::components::select::{Select, SelectOption};
+use crate::components::surface::{Badge, BadgeTone, BadgeVariant};
+use crate::components::text::{ErrorText, Eyebrow, EyebrowAs, EyebrowSize, Mb, PageTitle};
+use crate::components::textarea::Textarea;
 use crate::model::{PostEditData, POST_STATUSES, STATUS_DRAFT};
 use crate::pages::widgets::list_states;
 use crate::server::admin::{
@@ -41,29 +47,29 @@ pub fn AdminPostList() -> Element {
     rsx! {
         AdminShell { active: "posts".to_string(),
             div { class: "mb-6 flex items-center justify-between",
-                h1 { class: "text-2xl font-bold", "Posts" }
+                PageTitle { mb: Mb::None, "Posts" }
                 Link { to: Route::AdminPostNew, class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", "New post" }
             }
             div { class: "mb-4 flex items-center gap-3 text-sm",
                 label { class: "text-white/50", "Status" }
-                select {
-                    class: "rounded border border-white/15 bg-transparent px-2 py-1.5",
-                    onchange: move |e| status_filter.set(e.value()),
-                    option { value: "", selected: status_filter().is_empty(), "All" }
-                    for s in POST_STATUSES {
-                        option { value: "{s}", selected: status_filter() == s, "{s}" }
-                    }
+                Select::<String> {
+                    default_value: Some(status_filter()),
+                    on_value_change: move |v: Option<String>| status_filter.set(v.unwrap_or_default()),
+                    SelectOption::<String> { index: 0usize, value: String::new(), "All" }
+                    {POST_STATUSES.iter().enumerate().map(|(i, s)| rsx! {
+                        SelectOption::<String> { key: "{s}", index: i + 1, value: s.to_string(), "{s}" }
+                    })}
                 }
                 label { class: "ml-3 text-white/50", "Sort" }
-                select {
-                    class: "rounded border border-white/15 bg-transparent px-2 py-1.5",
-                    onchange: move |e| sort.set(e.value()),
-                    option { value: "recent", selected: sort() == "recent", "Recently updated" }
-                    option { value: "oldest", selected: sort() == "oldest", "Oldest updated" }
-                    option { value: "title", selected: sort() == "title", "Title A–Z" }
-                    option { value: "title_desc", selected: sort() == "title_desc", "Title Z–A" }
-                    option { value: "status", selected: sort() == "status", "Status" }
-                    option { value: "published", selected: sort() == "published", "Published date" }
+                Select::<String> {
+                    default_value: Some(sort()),
+                    on_value_change: move |v: Option<String>| { if let Some(v) = v { sort.set(v); } },
+                    SelectOption::<String> { index: 0usize, value: "recent".to_string(), "Recently updated" }
+                    SelectOption::<String> { index: 1usize, value: "oldest".to_string(), "Oldest updated" }
+                    SelectOption::<String> { index: 2usize, value: "title".to_string(), "Title A–Z" }
+                    SelectOption::<String> { index: 3usize, value: "title_desc".to_string(), "Title Z–A" }
+                    SelectOption::<String> { index: 4usize, value: "status".to_string(), "Status" }
+                    SelectOption::<String> { index: 5usize, value: "published".to_string(), "Published date" }
                 }
             }
             {list_states!(posts, empty: "No posts yet.", list => rsx! {
@@ -71,15 +77,15 @@ pub fn AdminPostList() -> Element {
                             thead { class: "border-b border-white/10 text-white/50",
                                 tr {
                                     th { class: "py-2",
-                                        button { class: "font-medium hover:text-white",
+                                        Button { variant: ButtonVariant::Ghost, size: ButtonSize::Xs,
                                             onclick: move |_| toggle_sort("title", "title_desc"), "Title" }
                                     }
                                     th {
-                                        button { class: "font-medium hover:text-white",
+                                        Button { variant: ButtonVariant::Ghost, size: ButtonSize::Xs,
                                             onclick: move |_| toggle_sort("status", "status_desc"), "Status" }
                                     }
                                     th {
-                                        button { class: "font-medium hover:text-white",
+                                        Button { variant: ButtonVariant::Ghost, size: ButtonSize::Xs,
                                             onclick: move |_| toggle_sort("published", "published_desc"), "Published" }
                                     }
                                     th { "" }
@@ -89,8 +95,8 @@ pub fn AdminPostList() -> Element {
                                 for p in list {
                                     tr { key: "{p.id}", class: "border-b border-white/5",
                                         td { class: "py-2", "{p.title}" }
-                                        td { span { class: "rounded-full border border-white/15 px-2 py-0.5 text-xs", "{p.status}" } }
-                                        td { class: "text-white/50", {p.published_at.clone().unwrap_or_else(|| "—".into())} }
+                                        td { Badge { tone: BadgeTone::Neutral, variant: BadgeVariant::Outlined, "{p.status}" } }
+                                        td { class: "text-white/50", {p.published_at.as_deref().map(crate::model::fmt_date).unwrap_or_else(|| "—".into())} }
                                         td { class: "flex gap-3 py-2",
                                             Link { to: Route::AdminPostEdit { id: p.id }, class: "text-brand-400 hover:underline", "Edit" }
                                             {
@@ -98,7 +104,7 @@ pub fn AdminPostList() -> Element {
                                                 rsx! {
                                                     ActionButton {
                                                         label: "Delete".to_string(),
-                                                        class: "text-red-400 hover:underline".to_string(),
+                                                        variant: ButtonVariant::Destructive,
                                                         on_done: move |_| posts.restart(),
                                                         action: move |_| Box::pin(async move { delete_post(pid).await }) as ActionFuture,
                                                     }
@@ -132,7 +138,7 @@ pub fn AdminPostEdit(id: i64) -> Element {
         AdminShell { active: "posts".to_string(),
             match &*data.read() {
                 Some(Ok(d)) => rsx! { EditorForm { key: "{d.id}", initial: d.clone() } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                Some(Err(e)) => rsx! { ErrorText { "{e}" } },
                 None => rsx! { p { class: "text-white/50", "Loading…" } },
             }
         }
@@ -181,12 +187,12 @@ fn EditorForm(initial: PostEditData) -> Element {
     let mut fullscreen = use_signal(|| false);
     let render_textarea = move |class: &'static str| {
         rsx! {
-            textarea {
+            Textarea {
                 class,
                 placeholder: "Write in Markdown…",
                 value: "{body}",
-                oninput: move |e| body.set(e.value()),
-                onkeydown: move |e| {
+                oninput: move |e: FormEvent| body.set(e.value()),
+                onkeydown: move |e: KeyboardEvent| {
                     if e.key() == Key::Escape && fullscreen() {
                         fullscreen.set(false);
                     }
@@ -234,38 +240,40 @@ fn EditorForm(initial: PostEditData) -> Element {
     };
 
     rsx! {
-        h1 { class: "mb-6 text-2xl font-bold", if editing { "Edit post" } else { "New post" } }
+        PageTitle { if editing { "Edit post" } else { "New post" } }
         div { class: "grid gap-6 lg:grid-cols-2",
             // Left: form
             div { class: "space-y-3",
-                input {
-                    class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-lg font-semibold",
+                Input {
+                    class: "w-full text-lg font-semibold",
                     placeholder: "Title",
                     value: "{title}",
-                    oninput: move |e| title.set(e.value()),
+                    oninput: move |e: FormEvent| title.set(e.value()),
                 }
-                input {
-                    class: "w-full rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
+                Input {
+                    class: "w-full text-sm",
                     placeholder: "Excerpt",
                     value: "{excerpt}",
-                    oninput: move |e| excerpt.set(e.value()),
+                    oninput: move |e: FormEvent| excerpt.set(e.value()),
                 }
                 // Featured image: URL field plus a media-library picker.
                 div { class: "space-y-2",
                     div { class: "flex gap-2",
-                        input {
-                            class: "flex-1 rounded border border-white/15 bg-transparent px-3 py-2 text-sm",
+                        Input {
+                            class: "flex-1 text-sm",
                             placeholder: "Featured image URL",
                             value: "{featured}",
-                            oninput: move |e| {
+                            oninput: move |e: FormEvent| {
                                 let v = e.value();
                                 featured.set(v.clone());
                                 debounce_featured.action(v);
                             },
                         }
-                        button {
+                        Button {
                             r#type: "button",
-                            class: "shrink-0 rounded border border-white/15 px-3 text-sm hover:bg-white/5",
+                            variant: ButtonVariant::Outline,
+                            size: ButtonSize::Sm,
+                            class: "shrink-0",
                             onclick: move |_| show_media_picker.set(!show_media_picker()),
                             if show_media_picker() { "Close" } else { "Library" }
                         }
@@ -296,74 +304,94 @@ fn EditorForm(initial: PostEditData) -> Element {
                                     }
                                 },
                                 Some(Ok(_)) => rsx! { p { class: "p-2 text-sm text-white/50", "No media uploaded yet — add some on the Media page." } },
-                                Some(Err(e)) => rsx! { p { class: "p-2 text-sm text-red-400", "Error: {e}" } },
+                                Some(Err(e)) => rsx! { ErrorText { small: true, class: "p-2".to_string(), "Error: {e}" } },
                                 None => rsx! { p { class: "p-2 text-sm text-white/50", "Loading…" } },
                             }
                         }
                     }
                 }
                 div { class: "flex gap-3",
-                    select {
-                        class: "rounded border border-white/15 bg-transparent px-2 py-1.5 text-sm",
-                        onchange: move |e| category_id.set(e.value().parse::<i64>().ok()),
-                        option { value: "", "— Category —" }
-                        if let Some(Ok(list)) = &*cats.read() {
-                            for c in list.clone() {
-                                option { value: "{c.id}", selected: category_id() == Some(c.id), "{c.name}" }
+                    label { class: "flex-1 space-y-1",
+                        span { class: "block text-sm font-medium text-white/70", "Category" }
+                        Select::<String> {
+                            default_value: Some(category_id().map(|id| id.to_string()).unwrap_or_default()),
+                            on_value_change: move |v: Option<String>| {
+                                category_id.set(v.and_then(|s| s.parse::<i64>().ok()))
+                            },
+                            SelectOption::<String> { index: 0usize, value: String::new(), "Uncategorized" }
+                            if let Some(Ok(list)) = &*cats.read() {
+                                {list.clone().into_iter().enumerate().map(|(i, c)| rsx! {
+                                    SelectOption::<String> { key: "{c.id}", index: i + 1, value: "{c.id}", "{c.name}" }
+                                })}
                             }
                         }
                     }
-                    select {
-                        class: "rounded border border-white/15 bg-transparent px-2 py-1.5 text-sm",
-                        onchange: move |e| status.set(e.value()),
-                        for s in POST_STATUSES {
-                            option { value: "{s}", selected: status() == s, "{s}" }
+                    label { class: "flex-1 space-y-1",
+                        span { class: "block text-sm font-medium text-white/70", "Status" }
+                        Select::<String> {
+                            default_value: Some(status()),
+                            on_value_change: move |v: Option<String>| { if let Some(v) = v { status.set(v); } },
+                            {POST_STATUSES.iter().enumerate().map(|(i, s)| rsx! {
+                                SelectOption::<String> { key: "{s}", index: i, value: s.to_string(), "{s}" }
+                            })}
                         }
                     }
                 }
                 if let Some(Ok(list)) = &*tags.read() {
                     div { class: "flex flex-wrap gap-2",
                         for t in list.clone() {
-                            label { key: "{t.id}", class: "flex items-center gap-1 text-xs text-white/70",
-                                input {
-                                    r#type: "checkbox",
-                                    checked: selected_tags().contains(&t.id),
-                                    onchange: move |e| {
-                                        let mut cur = selected_tags();
-                                        if e.checked() { if !cur.contains(&t.id) { cur.push(t.id); } }
-                                        else { cur.retain(|x| *x != t.id); }
-                                        selected_tags.set(cur);
-                                    },
+                            {
+                                let tid = t.id;
+                                let active = selected_tags().contains(&tid);
+                                rsx! {
+                                    // Toggle pill: brand-filled when selected, outline when not.
+                                    Button {
+                                        key: "{t.id}",
+                                        r#type: "button",
+                                        variant: if active { ButtonVariant::Primary } else { ButtonVariant::Outline },
+                                        size: ButtonSize::Xs,
+                                        onclick: move |_| {
+                                            let mut cur = selected_tags();
+                                            if cur.contains(&tid) {
+                                                cur.retain(|x| *x != tid);
+                                            } else {
+                                                cur.push(tid);
+                                            }
+                                            selected_tags.set(cur);
+                                        },
+                                        "#{t.name}"
+                                    }
                                 }
-                                "#{t.name}"
                             }
                         }
                     }
                 }
                 div { class: "flex items-center justify-between",
-                    label { class: "text-sm uppercase tracking-wide text-white/40", "Markdown" }
-                    button {
+                    Eyebrow { r#as: EyebrowAs::Label, size: EyebrowSize::Sm, "Markdown" }
+                    Button {
                         r#type: "button",
-                        class: "rounded border border-white/15 px-2 py-1 text-xs text-white/70 hover:bg-white/5",
+                        variant: ButtonVariant::Outline,
+                        size: ButtonSize::Xs,
                         onclick: move |_| fullscreen.set(true),
                         "⤢ Full screen"
                     }
                 }
-                {render_textarea("h-80 w-full rounded border border-white/15 bg-transparent px-3 py-2 font-mono text-sm")}
+                {render_textarea("h-80 w-full font-mono text-sm")}
                 div { class: "flex items-center gap-3",
-                    button {
-                        class: "rounded bg-brand-600 px-4 py-2 text-sm font-medium hover:bg-brand-500",
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        size: ButtonSize::Sm,
                         onclick: submit,
                         if editing { "Save changes" } else { "Create post" }
                     }
                     if !msg().is_empty() {
-                        span { class: "text-sm text-red-400", "{msg}" }
+                        ErrorText { inline: true, small: true, "{msg}" }
                     }
                 }
             }
             // Right: live preview
             div {
-                h3 { class: "mb-2 text-sm uppercase tracking-wide text-white/40", "Preview" }
+                Eyebrow { r#as: EyebrowAs::Div, size: EyebrowSize::Sm, mb: Mb::Mb2, "Preview" }
                 div { class: "prose max-w-none rounded border border-white/10 p-4",
                     {render_preview()}
                 }
@@ -374,15 +402,16 @@ fn EditorForm(initial: PostEditData) -> Element {
             div { class: "fixed inset-0 z-50 flex flex-col bg-[#0f1116]",
                 div { class: "flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-2",
                     span { class: "text-sm text-white/60", if editing { "Edit post" } else { "New post" } }
-                    button {
+                    Button {
                         r#type: "button",
-                        class: "rounded border border-white/15 px-3 py-1 text-sm text-white/70 hover:bg-white/5",
+                        variant: ButtonVariant::Outline,
+                        size: ButtonSize::Sm,
                         onclick: move |_| fullscreen.set(false),
                         "Exit full screen (Esc)"
                     }
                 }
                 div { class: "grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-2",
-                    {render_textarea("h-full w-full resize-none border-r border-white/10 bg-transparent p-4 font-mono text-sm focus:outline-none")}
+                    {render_textarea("h-full w-full resize-none border-r border-white/10 font-mono text-sm")}
                     div { class: "prose max-w-none overflow-y-auto p-4",
                         {render_preview()}
                     }

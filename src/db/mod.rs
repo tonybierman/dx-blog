@@ -23,6 +23,7 @@ use sqlx::SqlitePool;
 /// order live in each caller.
 pub const POST_CARD_COLUMNS: &str = "p.id, p.title, p.slug, p.excerpt, p.featured_image_url, \
      p.author_id, COALESCE(u.display_name, u.username) AS author_name, \
+     u.username AS author_username, \
      c.name AS category_name, p.status, p.published_at";
 
 /// The joins `POST_CARD_COLUMNS` depends on. Place right after a `FROM` that

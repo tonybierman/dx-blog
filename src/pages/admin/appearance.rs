@@ -6,6 +6,7 @@ use dioxus_sdk_time::use_debounce;
 use std::future::Future;
 use std::time::Duration;
 
+use crate::components::text::{Mb, PageTitle, SectionTitle};
 use crate::model::HomeLayout;
 use crate::server::settings::{
     get_home_layout, get_theme_hue, set_home_layout, set_theme_hue, DEFAULT_THEME_HUE,
@@ -36,7 +37,7 @@ fn save_with_status(
 pub fn AdminAppearance() -> Element {
     rsx! {
         AdminShell { active: "appearance".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Appearance" }
+            PageTitle { "Appearance" }
             ThemeSelector {}
             HomeLayoutSelector {}
         }
@@ -93,7 +94,7 @@ fn ThemeSelector() -> Element {
 
     rsx! {
         section { class: "mb-8 max-w-xl",
-            h2 { class: "mb-1 text-lg font-semibold", "Theme" }
+            SectionTitle { mb: Mb::Mb1, "Theme" }
             p { class: "mb-3 text-sm text-white/50",
                 "Pick the site accent. Changes preview instantly and save site-wide."
             }
@@ -167,7 +168,7 @@ fn HomeLayoutSelector() -> Element {
 
     rsx! {
         section { class: "mb-8",
-            h2 { class: "mb-1 text-lg font-semibold", "Home layout" }
+            SectionTitle { mb: Mb::Mb1, "Home layout" }
             p { class: "mb-3 text-sm text-white/50",
                 "The structural shell the public home page renders the post feed in. Saves immediately."
             }

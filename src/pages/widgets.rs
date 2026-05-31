@@ -4,6 +4,9 @@ use dioxus::prelude::*;
 
 use arium_dioxus::ui::components::skeleton::Skeleton;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::surface::{panel_class, PanelPadding, PanelVariant};
+use crate::components::text::{Eyebrow, EyebrowTone, Mb, SectionTitle, SectionTitleTone};
 use crate::model::{PostCard, PostFeed};
 use crate::server::comments::recent_comments;
 use crate::server::posts::featured_posts;
@@ -46,7 +49,7 @@ macro_rules! list_states {
                 $body
             }
             Some(Ok(_)) => rsx! { p { class: "text-white/50", {$empty} } },
-            Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+            Some(Err(e)) => rsx! { $crate::components::text::ErrorText { "{e}" } },
             None => rsx! { p { class: "text-white/50", "Loading…" } },
         };
         states
@@ -65,7 +68,7 @@ macro_rules! feed_states {
         // the caller's block ends.
         let states = match &*$res.read() {
             Some(Ok($feed)) => $body,
-            Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
+            Some(Err(e)) => rsx! { $crate::components::text::ErrorText { "Error: {e}" } },
             None => rsx! { FeedSkeleton {} },
         };
         states
@@ -89,7 +92,7 @@ pub fn CategoryList() -> Element {
     let cats = use_resource(list_categories);
     rsx! {
         div { class: "text-sm",
-            h3 { class: "mb-2 font-semibold text-white/80", "Categories" }
+            SectionTitle { tone: SectionTitleTone::Sidebar, "Categories" }
             {sidebar_states!(cats, empty: "None yet", list => rsx! {
                 ul { class: "space-y-1",
                     for c in list {
@@ -118,7 +121,7 @@ pub fn TagList() -> Element {
     };
     rsx! {
         div { class: "mt-6 text-sm",
-            h3 { class: "mb-3 font-semibold text-white/80", "Tags" }
+            SectionTitle { tone: SectionTitleTone::Sidebar, mb: Mb::Mb3, "Tags" }
             {sidebar_states!(tags, empty: "None yet", list => rsx! {
                 div { class: "flex flex-wrap gap-2",
                     for t in list {
@@ -157,7 +160,7 @@ pub fn FeaturedPosts() -> Element {
     let featured = use_resource(|| async move { featured_posts(5).await });
     rsx! {
         div { class: "text-sm",
-            h3 { class: "mb-2 font-semibold text-white/80", "Featured" }
+            SectionTitle { tone: SectionTitleTone::Sidebar, "Featured" }
             {sidebar_states!(featured, empty: "No posts yet", list => rsx! {
                 ul { class: "space-y-2",
                     for p in list {
@@ -181,7 +184,7 @@ pub fn RecentComments() -> Element {
     let recent = use_resource(|| async move { recent_comments(5).await });
     rsx! {
         div { class: "mt-6 text-sm",
-            h3 { class: "mb-2 font-semibold text-white/80", "Recent comments" }
+            SectionTitle { tone: SectionTitleTone::Sidebar, "Recent comments" }
             {sidebar_states!(recent, empty: "No comments yet", list => rsx! {
                 ul { class: "space-y-3",
                     for c in list {
@@ -275,14 +278,16 @@ pub fn PostCardView(card: PostCard, #[props(default)] fill: bool) -> Element {
         featured_srcset_webp,
         featured_srcset_avif,
         author_name,
+        author_username,
         category_name,
         published_at,
         ..
     } = card;
 
+    let surface = panel_class(PanelVariant::Bleed, PanelPadding::None);
     rsx! {
         article {
-            class: "overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]",
+            class: "{surface}",
             class: if fill { "flex h-full flex-col" },
             if let Some(img) = featured_image_url {
                 ResponsiveImg {
@@ -296,15 +301,19 @@ pub fn PostCardView(card: PostCard, #[props(default)] fill: bool) -> Element {
             }
             div { class: "p-4",
                 if let Some(cat) = category_name {
-                    span { class: "text-xs uppercase tracking-wide text-brand-400", "{cat}" }
+                    Eyebrow { tone: EyebrowTone::Brand, "{cat}" }
                 }
                 h2 { class: "mt-1 text-lg font-semibold",
                     Link { to: Route::PostDetail { slug: slug.clone() }, class: "hover:underline", "{title}" }
                 }
                 p { class: "mt-2 line-clamp-3 text-sm text-white/60", "{excerpt}" }
                 div { class: "mt-3 flex items-center gap-2 text-xs text-white/40",
-                    span { "{author_name}" }
-                    if let Some(when) = published_at {
+                    Link {
+                        to: Route::AuthorProfile { slug: author_username.clone() },
+                        class: "hover:underline",
+                        "{author_name}"
+                    }
+                    if let Some(when) = published_at.as_deref().map(crate::model::fmt_date) {
                         span { "·" }
                         span { "{when}" }
                     }
@@ -322,15 +331,17 @@ pub fn PaginationBar(page: i64, total_pages: i64, on_change: EventHandler<i64>) 
     }
     rsx! {
         nav { class: "mt-8 flex items-center justify-center gap-4",
-            button {
-                class: "rounded border border-white/15 px-3 py-1 text-sm disabled:opacity-40",
+            Button {
+                variant: ButtonVariant::Outline,
+                size: ButtonSize::Sm,
                 disabled: page <= 1,
                 onclick: move |_| on_change.call(page - 1),
                 "← Prev"
             }
             span { class: "text-sm text-white/60", "Page {page} of {total_pages}" }
-            button {
-                class: "rounded border border-white/15 px-3 py-1 text-sm disabled:opacity-40",
+            Button {
+                variant: ButtonVariant::Outline,
+                size: ButtonSize::Sm,
                 disabled: page >= total_pages,
                 onclick: move |_| on_change.call(page + 1),
                 "Next →"
@@ -342,8 +353,9 @@ pub fn PaginationBar(page: i64, total_pages: i64, on_change: EventHandler<i64>) 
 /// Pulsing placeholder shaped like a `PostCardView`, shown while a feed loads.
 #[component]
 pub fn PostCardSkeleton() -> Element {
+    let surface = panel_class(PanelVariant::Bleed, PanelPadding::None);
     rsx! {
-        article { class: "overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]",
+        article { class: "{surface}",
             Skeleton { style: "height: 10rem; width: 100%; border-radius: 0;" }
             div { class: "space-y-3 p-4",
                 Skeleton { style: "height: 0.75rem; width: 4rem;" }

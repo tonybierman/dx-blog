@@ -2,6 +2,9 @@
 
 use dioxus::prelude::*;
 
+use crate::components::button::ButtonVariant;
+use crate::components::surface::{Badge, Panel, PanelPadding, PanelVariant};
+use crate::components::text::PageTitle;
 use crate::live::use_admin_live;
 use crate::pages::widgets::list_states;
 use crate::server::admin::{admin_list_comments, delete_comment, moderate_comment};
@@ -21,14 +24,14 @@ pub fn AdminComments() -> Element {
     });
     rsx! {
         AdminShell { active: "comments".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Comment moderation" }
+            PageTitle { "Comment moderation" }
             {list_states!(comments, empty: "No comments.", list => rsx! {
                         div { class: "space-y-3",
                             for c in list {
-                                div { key: "{c.id}", class: "rounded-lg border border-white/10 p-3",
+                                Panel { key: "{c.id}", variant: PanelVariant::Outlined, padding: PanelPadding::Md,
                                     div { class: "flex items-center justify-between",
                                         div { class: "text-sm font-medium", "{c.display_name}" }
-                                        span { class: "rounded-full bg-brand-500/10 px-2 py-0.5 text-xs text-brand-300", "{c.status}" }
+                                        Badge { "{c.status}" }
                                     }
                                     p { class: "mt-1 text-sm text-white/80", "{c.body}" }
                                     div { class: "mt-2 flex gap-3 text-xs",
@@ -47,7 +50,7 @@ pub fn AdminComments() -> Element {
                                                 }
                                                 ActionButton {
                                                     label: "Delete".to_string(),
-                                                    class: "text-red-400 hover:underline".to_string(),
+                                                    variant: ButtonVariant::Destructive,
                                                     on_done: move |_| comments.restart(),
                                                     action: move |_| Box::pin(async move { delete_comment(cid).await }) as ActionFuture,
                                                 }

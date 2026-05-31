@@ -3,6 +3,9 @@
 
 use dioxus::prelude::*;
 
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::surface::{Panel, PanelPadding, PanelVariant};
+use crate::components::text::PageTitle;
 use crate::pages::widgets::list_states;
 use crate::server::admin::{delete_media, list_media, media_usage, upload_media};
 
@@ -51,16 +54,16 @@ pub fn AdminMedia() -> Element {
 
     rsx! {
         AdminShell { active: "media".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Media library" }
+            PageTitle { "Media library" }
             div { class: "mb-6 flex items-center gap-3",
                 input { id: "mediafile", r#type: "file", accept: "image/*", class: "text-sm" }
-                button { class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", onclick: upload, "Upload" }
+                Button { variant: ButtonVariant::Primary, size: ButtonSize::Sm, onclick: upload, "Upload" }
                 if !msg().is_empty() { span { class: "text-sm text-white/60", "{msg}" } }
             }
             {list_states!(media, empty: "No media yet.", list => rsx! {
                     div { class: "columns-2 gap-4 md:columns-3 lg:columns-4",
                         for m in list {
-                            div { key: "{m.id}", class: "mb-4 inline-block w-full break-inside-avoid rounded-lg border border-white/10 p-2",
+                            Panel { key: "{m.id}", variant: PanelVariant::Outlined, padding: PanelPadding::Sm, class: "mb-4 inline-block w-full break-inside-avoid".to_string(),
                                 img { class: "w-full rounded", src: "{m.url}", alt: "{m.filename}" }
                                 div { class: "mt-1 flex items-center justify-between gap-2",
                                     button {
@@ -79,8 +82,10 @@ pub fn AdminMedia() -> Element {
                                         let mid = m.id;
                                         let usage = m.usage_count;
                                         rsx! {
-                                            button {
-                                                class: "shrink-0 text-xs text-red-400 hover:underline",
+                                            Button {
+                                                variant: ButtonVariant::Destructive,
+                                                size: ButtonSize::Xs,
+                                                class: "shrink-0",
                                                 title: "Delete",
                                                 onclick: move |_| {
                                                     spawn(async move {

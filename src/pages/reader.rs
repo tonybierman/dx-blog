@@ -7,6 +7,15 @@ use arium_dioxus::ui::{use_permissions, ResourceGate};
 use arium_dioxus::ResourceRole;
 use dioxus_sdk_time::use_interval;
 
+use crate::components::avatar::{Avatar, AvatarFallback, AvatarImage, AvatarImageSize};
+use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::dropdown_menu::{
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+};
+use crate::components::input::Input;
+use crate::components::surface::{Alert, Badge, BadgeTone, Panel, PanelVariant};
+use crate::components::text::{ErrorText, Eyebrow, EyebrowAs, Mb, PageTitle};
+use crate::components::textarea::Textarea;
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
 use crate::live::{use_live, LiveHandle};
 use crate::model::CommentView;
@@ -67,7 +76,7 @@ fn PostContent(slug: String) -> Element {
             }
         }
         Ok(None) => rsx! { p { class: "mt-8 text-white/60", "Post not found." } },
-        Err(e) => rsx! { p { class: "mt-8 text-red-400", "Error: {e}" } },
+        Err(e) => rsx! { ErrorText { class: "mt-8".to_string(), "Error: {e}" } },
     }
 }
 
@@ -161,7 +170,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
     rsx! {
         article {
             if is_draft {
-                div { class: "mb-6 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200",
+                Alert { class: "mb-6".to_string(),
                     "Draft preview — this post is not published and is only visible to you."
                 }
             }
@@ -193,7 +202,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                     class: "hover:underline",
                     "{post.author_name}"
                 }
-                if let Some(when) = post.published_at.clone() {
+                if let Some(when) = post.published_at.as_deref().map(crate::model::fmt_date) {
                     span { "· {when}" }
                 }
                 PresenceBadge { live }
@@ -218,8 +227,15 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
 
             // Author bio
             if let Some(bio) = post.author_bio.clone() {
-                div { class: "mt-10 rounded-xl border border-white/10 bg-white/[0.03] p-4",
-                    h3 { class: "font-semibold", "About {post.author_name}" }
+                Panel { class: "mt-10".to_string(),
+                    h3 { class: "font-semibold",
+                        "About "
+                        Link {
+                            to: Route::AuthorProfile { slug: post.author_username.clone() },
+                            class: "hover:underline",
+                            "{post.author_name}"
+                        }
+                    }
                     p { class: "mt-1 text-sm text-white/60", "{bio}" }
                 }
             }
@@ -239,8 +255,7 @@ fn PresenceBadge(live: LiveHandle) -> Element {
     let n = (live.reading_now)();
     rsx! {
         if n >= 1 {
-            span { class: "inline-flex items-center gap-1 rounded-full bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-300",
-                span { class: "h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" }
+            Badge { tone: BadgeTone::Brand, dot: true,
                 "{n} reading now"
             }
         }
@@ -293,8 +308,9 @@ fn ReactionBar(post_id: i64, live: LiveHandle) -> Element {
 
     rsx! {
         div { class: "relative mt-10 flex items-center gap-3",
-            button {
-                class: "inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-1.5 text-sm hover:bg-white/5 active:scale-95",
+            Button {
+                variant: ButtonVariant::Outline,
+                size: ButtonSize::Sm,
                 onclick: clap,
                 span { "👏" }
                 "Clap"
@@ -439,23 +455,23 @@ fn CommentSection(post_id: i64, live: LiveHandle) -> Element {
             div { class: "mt-4 space-y-4",
                 if !merged.is_empty() {
                     for c in merged {
-                        div { key: "{c.id}", class: "rounded-lg border border-white/10 p-3",
+                        Panel { key: "{c.id}", variant: PanelVariant::Outlined, padding: crate::components::surface::PanelPadding::Md,
                             div { class: "flex items-center gap-2",
                                 div { class: "text-sm font-medium", "{c.display_name}" }
                                 if c.status == "sending" {
                                     span { class: "text-xs text-white/40 italic", "posting…" }
                                 } else if c.status == "pending" {
-                                    span { class: "rounded bg-amber-400/10 px-1.5 text-xs text-amber-300", "awaiting approval" }
+                                    Badge { tone: BadgeTone::Amber, "awaiting approval" }
                                 }
                             }
-                            div { class: "text-xs text-white/40", "{c.created_at}" }
+                            div { class: "text-xs text-white/40", {crate::model::fmt_date(&c.created_at)} }
                             p { class: "mt-1 text-sm text-white/80", "{c.body}" }
                         }
                     }
                 } else if loading {
                     p { class: "text-sm text-white/50", "Loading…" }
                 } else if load_error {
-                    p { class: "text-sm text-red-400", "Couldn't load comments." }
+                    ErrorText { small: true, "Couldn't load comments." }
                 } else {
                     p { class: "text-sm text-white/50", "No comments yet." }
                 }
@@ -465,28 +481,29 @@ fn CommentSection(post_id: i64, live: LiveHandle) -> Element {
                 h3 { class: "font-medium", "Leave a comment" }
                 if !logged_in {
                     div { class: "flex gap-2",
-                        input {
-                            class: "w-1/2 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                        Input {
+                            class: "w-1/2",
                             placeholder: "Name",
                             value: "{name}",
-                            oninput: move |e| name.set(e.value()),
+                            oninput: move |e: FormEvent| name.set(e.value()),
                         }
-                        input {
-                            class: "w-1/2 rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                        Input {
+                            class: "w-1/2",
                             placeholder: "Email",
                             value: "{email}",
-                            oninput: move |e| email.set(e.value()),
+                            oninput: move |e: FormEvent| email.set(e.value()),
                         }
                     }
                 }
-                textarea {
-                    class: "h-24 w-full rounded border border-white/15 bg-transparent px-2 py-1 text-sm",
+                Textarea {
+                    class: "h-24 w-full",
                     placeholder: "Your comment…",
                     value: "{body}",
-                    oninput: move |e| body.set(e.value()),
+                    oninput: move |e: FormEvent| body.set(e.value()),
                 }
-                button {
-                    class: "rounded bg-brand-600 px-4 py-1.5 text-sm font-medium hover:bg-brand-500 disabled:opacity-50",
+                Button {
+                    variant: ButtonVariant::Primary,
+                    size: ButtonSize::Sm,
                     disabled: submitting(),
                     onclick: submit,
                     if submitting() { "Posting…" } else { "Post comment" }
@@ -539,7 +556,7 @@ pub fn CategoryFeed(slug: String) -> Element {
     rsx! {
         HolyGrailLayout {
             left: rsx! { CategoryList {} TagList {} },
-            h1 { class: "mb-6 text-2xl font-bold", "Category: {title}" }
+            PageTitle { "Category: {title}" }
             PaginatedFeed { category_slug: Some(slug.clone()), tag_slug: None }
         }
     }
@@ -575,11 +592,27 @@ pub fn TagFeed(slug: String) -> Element {
     rsx! {
         BentoGridLayout {
             left: rsx! {
-                h1 { class: "text-2xl font-bold", "#{title}" }
+                PageTitle { "#{title}" }
                 TagList {}
             },
             FeedSection { posts, shape: FeedShape::Bento, page }
         }
+    }
+}
+
+/// Up-to-two uppercase initials from a display name, shown as the avatar
+/// fallback when an author has no image. Falls back to "?" for an empty name.
+fn author_initials(name: &str) -> String {
+    let initials: String = name
+        .split_whitespace()
+        .filter_map(|w| w.chars().next())
+        .take(2)
+        .collect::<String>()
+        .to_uppercase();
+    if initials.is_empty() {
+        "?".to_string()
+    } else {
+        initials
     }
 }
 
@@ -610,10 +643,16 @@ pub fn AuthorProfile(slug: String) -> Element {
     let sidebar = match &*profile.read() {
         Some(Ok(Some(p))) => {
             let p = p.clone();
+            let initials = author_initials(&p.display_name);
             rsx! {
                 div {
-                    if let Some(av) = p.avatar_url.clone() {
-                        img { class: "mb-3 h-20 w-20 rounded-full object-cover", src: "{av}" }
+                    Avatar {
+                        size: AvatarImageSize::Large,
+                        class: "mb-3",
+                        if let Some(av) = p.avatar_url.clone() {
+                            AvatarImage { src: "{av}", alt: "{p.display_name}" }
+                        }
+                        AvatarFallback { "{initials}" }
                     }
                     h2 { class: "text-lg font-semibold", "{p.display_name}" }
                     p { class: "text-sm text-white/40", "@{p.username}" }
@@ -629,7 +668,7 @@ pub fn AuthorProfile(slug: String) -> Element {
     rsx! {
         HolyGrailLayout {
             left: sidebar,
-            h1 { class: "mb-6 text-2xl font-bold", "Posts" }
+            PageTitle { "Posts" }
             FeedSection { posts, shape: FeedShape::Grid, page }
         }
     }
@@ -641,8 +680,53 @@ pub fn Archive() -> Element {
     let posts = use_resource(move || async move { list_archive(page()).await });
     rsx! {
         MasonryLayout {
-            h1 { class: "mb-6 text-2xl font-bold", "Archive" }
+            PageTitle { "Archive" }
             FeedSection { posts, shape: FeedShape::Masonry, page }
+        }
+    }
+}
+
+/// A single search refinement: a labelled catalog `DropdownMenu` whose trigger
+/// shows the current selection and whose items each carry a `(value, display)`
+/// pair. `value` is the empty string for the "any" option. Selecting an item
+/// fires `on_select` with that value.
+#[component]
+fn FacetMenu(
+    label: &'static str,
+    selected: String,
+    options: Vec<(String, String)>,
+    on_select: EventHandler<String>,
+) -> Element {
+    // Trigger text reflects the current selection (falls back to the first
+    // option's label, which is the "any" choice).
+    let current = options
+        .iter()
+        .find(|(v, _)| v == &selected)
+        .or_else(|| options.first())
+        .map(|(_, disp)| disp.clone())
+        .unwrap_or_default();
+
+    rsx! {
+        div {
+            Eyebrow { r#as: EyebrowAs::Label, mb: Mb::Mb1, class: "block".to_string(), "{label}" }
+            DropdownMenu { class: "block w-full",
+                DropdownMenuTrigger {
+                    class: "flex w-full items-center justify-between gap-2 text-left",
+                    span { "{current}" }
+                    span { class: "text-white/40", "▾" }
+                }
+                DropdownMenuContent {
+                    for (i, (value, disp)) in options.into_iter().enumerate() {
+                        DropdownMenuItem {
+                            key: "{value}",
+                            index: i,
+                            value: value.clone(),
+                            on_select: move |v: String| on_select.call(v),
+                            "{disp}"
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -684,60 +768,59 @@ pub fn SearchResults(q: String) -> Element {
                 div { class: "space-y-5 text-sm",
                     h3 { class: "font-semibold text-white/80", "Refine" }
                     // Category facet
-                    div {
-                        label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "Category" }
-                        select {
-                            class: "w-full rounded border border-white/15 bg-transparent px-2 py-1.5",
-                            onchange: move |e| { category.set(e.value()); page.set(1); },
-                            option { value: "", selected: category().is_empty(), "All categories" }
+                    FacetMenu {
+                        label: "Category",
+                        selected: category(),
+                        options: {
+                            let mut opts = vec![(String::new(), "All categories".to_string())];
                             if let Some(Ok(list)) = &*cats.read() {
-                                for c in list.clone() {
-                                    option { value: "{c.slug}", selected: category() == c.slug, "{c.name}" }
-                                }
+                                opts.extend(list.iter().map(|c| (c.slug.clone(), c.name.clone())));
                             }
-                        }
+                            opts
+                        },
+                        on_select: move |v: String| { category.set(v); page.set(1); },
                     }
                     // Tag facet
-                    div {
-                        label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "Tag" }
-                        select {
-                            class: "w-full rounded border border-white/15 bg-transparent px-2 py-1.5",
-                            onchange: move |e| { tag.set(e.value()); page.set(1); },
-                            option { value: "", selected: tag().is_empty(), "All tags" }
+                    FacetMenu {
+                        label: "Tag",
+                        selected: tag(),
+                        options: {
+                            let mut opts = vec![(String::new(), "All tags".to_string())];
                             if let Some(Ok(list)) = &*tags.read() {
-                                for t in list.clone() {
-                                    option { value: "{t.slug}", selected: tag() == t.slug, "#{t.name}" }
-                                }
+                                opts.extend(list.iter().map(|t| (t.slug.clone(), format!("#{}", t.name))));
                             }
-                        }
+                            opts
+                        },
+                        on_select: move |v: String| { tag.set(v); page.set(1); },
                     }
                     // Date facet
-                    div {
-                        label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "Published" }
-                        select {
-                            class: "w-full rounded border border-white/15 bg-transparent px-2 py-1.5",
-                            onchange: move |e| { date_range.set(e.value()); page.set(1); },
-                            option { value: "", selected: date_range().is_empty(), "Any time" }
-                            option { value: "week", selected: date_range() == "week", "Past week" }
-                            option { value: "month", selected: date_range() == "month", "Past month" }
-                            option { value: "year", selected: date_range() == "year", "Past year" }
-                        }
+                    FacetMenu {
+                        label: "Published",
+                        selected: date_range(),
+                        options: vec![
+                            (String::new(), "Any time".to_string()),
+                            ("week".to_string(), "Past week".to_string()),
+                            ("month".to_string(), "Past month".to_string()),
+                            ("year".to_string(), "Past year".to_string()),
+                        ],
+                        on_select: move |v: String| { date_range.set(v); page.set(1); },
                     }
                     if !category().is_empty() || !tag().is_empty() || !date_range().is_empty() {
-                        button {
-                            class: "text-xs text-brand-400 hover:underline",
+                        Button {
+                            variant: ButtonVariant::Link,
+                            size: ButtonSize::Xs,
                             onclick: move |_| { category.set(String::new()); tag.set(String::new()); date_range.set(String::new()); page.set(1); },
                             "Clear filters"
                         }
                     }
                 }
             },
-            h1 { class: "mb-4 text-2xl font-bold", "Search" }
-            input {
-                class: "mb-6 w-full rounded border border-white/15 bg-transparent px-3 py-2",
+            PageTitle { "Search" }
+            Input {
+                class: "mb-6 w-full",
                 placeholder: "Search posts…",
                 value: "{query}",
-                oninput: move |e| { query.set(e.value()); page.set(1); },
+                oninput: move |e: FormEvent| { query.set(e.value()); page.set(1); },
             }
             if let Some(Ok(feed)) = &*results.read() {
                 p { class: "mb-4 text-sm text-white/50", "{feed.total} result(s)" }
@@ -773,15 +856,15 @@ pub fn Subscribe() -> Element {
                 h1 { class: "text-3xl font-bold", "Subscribe" }
                 p { class: "max-w-md text-white/60", "Get new posts in your inbox. No spam." }
                 div { class: "flex w-full max-w-md gap-2",
-                    input {
-                        class: "flex-1 rounded border border-white/15 bg-transparent px-3 py-2",
+                    Input {
+                        class: "flex-1",
                         r#type: "email",
                         placeholder: "you@example.com",
                         value: "{email}",
-                        oninput: move |e| email.set(e.value()),
+                        oninput: move |e: FormEvent| email.set(e.value()),
                     }
-                    button {
-                        class: "rounded bg-brand-600 px-4 py-2 font-medium hover:bg-brand-500",
+                    Button {
+                        variant: ButtonVariant::Primary,
                         onclick: submit,
                         "Subscribe"
                     }
@@ -818,7 +901,7 @@ pub fn ConfirmSubscription(token: String) -> Element {
                         }
                         Link { to: Route::Subscribe, class: "text-sm text-brand-400 hover:underline", "Subscribe →" }
                     },
-                    Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
+                    Some(Err(e)) => rsx! { ErrorText { "Error: {e}" } },
                     None => rsx! { p { class: "text-white/50", "Confirming…" } },
                 }
                 Link { to: Route::HomePage, class: "text-sm text-white/50 hover:underline", "← Home" }

@@ -17,6 +17,7 @@ use arium_dioxus::ui::components::label::Label;
 use arium_dioxus::ui::{OAuthProvidersProvider, PermissionsProvider};
 
 mod auth_tokens;
+mod components;
 #[cfg(feature = "server")]
 mod db;
 mod embeds;
@@ -44,6 +45,7 @@ use pages::reader::{
 };
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
+const COMPONENTS_THEME_CSS: Asset = asset!("/assets/dx-components-theme.css");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 // Syntect (base16-ocean.dark) token colors for highlighted code blocks. The
@@ -505,6 +507,7 @@ fn App() -> Element {
         }
         // arium's catalog theme tokens (canonical — no vendored copy).
         document::Stylesheet { href: arium_dioxus::DEFAULT_THEME_CSS }
+        document::Stylesheet { href: COMPONENTS_THEME_CSS }
         document::Stylesheet { href: MAIN_CSS }
         document::Stylesheet { href: TAILWIND_CSS }
         document::Stylesheet { href: HIGHLIGHT_CSS }

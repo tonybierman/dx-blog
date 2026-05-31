@@ -207,7 +207,7 @@ dependencies = [
  "axum_session_auth",
  "dioxus",
  "dioxus-icons",
- "dioxus-primitives",
+ "dioxus-primitives 0.0.1 (git+https://github.com/DioxusLabs/components?rev=837c9d4c1c9f99b19de7a3f087d8af1b0538dcae)",
  "gloo-timers 0.4.0",
  "sqlx",
 ]
@@ -1382,6 +1382,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dioxus-attributes"
+version = "0.1.0"
+source = "git+https://github.com/DioxusLabs/components#02801f27e4b3e30606e5c77e435c9d955c708eb3"
+dependencies = [
+ "dioxus-rsx",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "dioxus-cli-config"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1745,7 +1756,23 @@ version = "0.0.1"
 source = "git+https://github.com/DioxusLabs/components?rev=837c9d4c1c9f99b19de7a3f087d8af1b0538dcae#837c9d4c1c9f99b19de7a3f087d8af1b0538dcae"
 dependencies = [
  "dioxus",
- "dioxus-attributes",
+ "dioxus-attributes 0.1.0 (git+https://github.com/DioxusLabs/components?rev=837c9d4c1c9f99b19de7a3f087d8af1b0538dcae)",
+ "dioxus-sdk-time",
+ "lazy-js-bundle",
+ "num-integer",
+ "palette",
+ "serde",
+ "time",
+ "tracing",
+]
+
+[[package]]
+name = "dioxus-primitives"
+version = "0.0.1"
+source = "git+https://github.com/DioxusLabs/components#02801f27e4b3e30606e5c77e435c9d955c708eb3"
+dependencies = [
+ "dioxus",
+ "dioxus-attributes 0.1.0 (git+https://github.com/DioxusLabs/components)",
  "dioxus-sdk-time",
  "lazy-js-bundle",
  "num-integer",
@@ -2017,6 +2044,8 @@ dependencies = [
  "axum",
  "base64",
  "dioxus",
+ "dioxus-icons",
+ "dioxus-primitives 0.0.1 (git+https://github.com/DioxusLabs/components)",
  "dioxus-sdk-time",
  "dioxus-web",
  "futures",

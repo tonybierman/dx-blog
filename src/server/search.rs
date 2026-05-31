@@ -1,4 +1,7 @@
-//! Full-text search over posts via the `posts_fts` FTS5 table.
+//! Full-text search over posts. SQLite uses the `posts_fts` FTS5 virtual table
+//! (with per-term prefix-wildcard pre-processing below); Postgres uses a
+//! `tsvector` column with `plainto_tsquery` (which handles tokenisation on its
+//! own, so the wildcard step is skipped).
 
 use dioxus::prelude::*;
 
@@ -27,12 +30,18 @@ pub async fn search_posts(
     }
     let (page, offset) = page_offset(page);
 
-    // Prefix-match each term so partial words hit; quote to neutralise FTS syntax.
+    // SQLite FTS5: prefix-match each term so partial words hit; quote to
+    // neutralise FTS syntax. Postgres `plainto_tsquery` tokenises the raw text
+    // itself (and `to_tsvector` already stems on lookup), so the raw `q` goes
+    // through unchanged in the postgres path.
+    #[cfg(feature = "sqlite")]
     let fts_query = q
         .split_whitespace()
         .map(|t| format!("\"{}\"*", t.replace('"', "")))
         .collect::<Vec<_>>()
         .join(" ");
+    #[cfg(feature = "postgres")]
+    let fts_query = q.clone();
 
     let category_slug = category_slug.filter(|s| !s.is_empty());
     let tag_slug = tag_slug.filter(|s| !s.is_empty());

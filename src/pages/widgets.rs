@@ -328,7 +328,7 @@ pub fn PostCardView(card: PostCard, #[props(default)] fill: bool) -> Element {
                         class: "hover:underline",
                         "{author_name}"
                     }
-                    if let Some(when) = published_at.as_deref().map(crate::model::fmt_date) {
+                    if let Some(when) = published_at.as_ref().map(crate::model::fmt_date) {
                         span { "·" }
                         span { "{when}" }
                     }

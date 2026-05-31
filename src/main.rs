@@ -130,47 +130,24 @@ fn main() {
     dioxus::serve(|| async {
         use std::sync::Arc;
 
-        // Dev SQLite DB under ./data unless DATABASE_URL is set.
-        let pool = {
-            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-            use std::str::FromStr;
-
-            // SQLite creates the file but not its parent dir.
-            std::fs::create_dir_all(concat!(env!("CARGO_MANIFEST_DIR"), "/data")).ok();
-
-            let connect_opts = match std::env::var("DATABASE_URL") {
-                Ok(url) if !url.trim().is_empty() => SqliteConnectOptions::from_str(&url)?,
-                _ => SqliteConnectOptions::new()
-                    .filename(concat!(env!("CARGO_MANIFEST_DIR"), "/data/blog.db"))
-                    .create_if_missing(true),
-            }
-            // WAL lets readers proceed concurrently with a writer — important here
-            // because every page view writes a post_views row while feed/sidebar
-            // reads run; in the default rollback journal those writers block readers.
-            .journal_mode(SqliteJournalMode::Wal)
-            // SQLite leaves foreign-key enforcement OFF per connection by default.
-            // Turn it on (every pooled connection) so the schema's REFERENCES …
-            // ON DELETE clauses actually fire — child rows cascade/null out
-            // instead of orphaning. The hand-rolled cascades in `delete_post`
-            // stay as a belt-and-braces fallback for pre-existing databases that
-            // were created before the constraints were added.
-            .foreign_keys(true);
-            SqlitePoolOptions::new()
-                .max_connections(20)
-                .connect_with(connect_opts)
-                .await?
-        };
+        // Pool construction differs per backend — see `connect_pool` below.
+        let pool = connect_pool().await?;
 
         // arium owns its schema; membership_migrator adds arium_resource_members
-        // (per-resource roles); then our own blog tables.
+        // (per-resource roles); then our own blog tables. All three migrators
+        // share the same `_sqlx_migrations` table — set_ignore_missing(true) on
+        // every one lets arium's 0001-0009 and the blog's timestamp-versioned
+        // migrations coexist without "missing migrations" cross-migrator errors.
         arium_dioxus::migrator().run(&pool).await?;
         arium_dioxus::membership_migrator().run(&pool).await?;
-        // Our blog schema runs as idempotent raw DDL rather than a tracked
-        // sqlx migrator, so it doesn't share arium's `_sqlx_migrations` table
-        // (which would otherwise flag arium's versions as "missing").
-        sqlx::raw_sql(include_str!("../migrations/0001_blog.sql"))
-            .execute(&pool)
-            .await?;
+        {
+            #[cfg(feature = "sqlite")]
+            let mut m = sqlx::migrate!("./migrations/sqlite");
+            #[cfg(feature = "postgres")]
+            let mut m = sqlx::migrate!("./migrations/postgres");
+            m.set_ignore_missing(true);
+            m.run(&pool).await?;
+        }
 
         // One-shot, idempotent rendition backfill for uploads made before the
         // responsive-image pipeline existed (or before `--features avif` was
@@ -369,6 +346,59 @@ fn main() {
 
         arium_dioxus::install(router, cfg).await
     });
+}
+
+/// Open the backend-specific sqlx pool. Exactly one of the `sqlite`/`postgres`
+/// features is active (the arium-pool guard enforces this), so only one of
+/// these definitions exists at compile time. Returns the shared
+/// `arium_dioxus::pool::Pool` alias used everywhere else in the app.
+#[cfg(all(feature = "server", feature = "sqlite"))]
+async fn connect_pool() -> anyhow::Result<arium_dioxus::pool::Pool> {
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    // SQLite creates the file but not its parent dir.
+    std::fs::create_dir_all(concat!(env!("CARGO_MANIFEST_DIR"), "/data")).ok();
+
+    let connect_opts = match std::env::var("DATABASE_URL") {
+        Ok(url) if !url.trim().is_empty() => SqliteConnectOptions::from_str(&url)?,
+        _ => SqliteConnectOptions::new()
+            .filename(concat!(env!("CARGO_MANIFEST_DIR"), "/data/blog.db"))
+            .create_if_missing(true),
+    }
+    // WAL lets readers proceed concurrently with a writer — important here
+    // because every page view writes a post_views row while feed/sidebar
+    // reads run; in the default rollback journal those writers block readers.
+    .journal_mode(SqliteJournalMode::Wal)
+    // SQLite leaves foreign-key enforcement OFF per connection by default.
+    // Turn it on (every pooled connection) so the schema's REFERENCES …
+    // ON DELETE clauses actually fire — child rows cascade/null out
+    // instead of orphaning. The hand-rolled cascades in `delete_post`
+    // stay as a belt-and-braces fallback for pre-existing databases that
+    // were created before the constraints were added.
+    .foreign_keys(true);
+    Ok(SqlitePoolOptions::new()
+        .max_connections(20)
+        .connect_with(connect_opts)
+        .await?)
+}
+
+#[cfg(all(feature = "server", feature = "postgres"))]
+async fn connect_pool() -> anyhow::Result<arium_dioxus::pool::Pool> {
+    use sqlx::postgres::PgPoolOptions;
+    let url = std::env::var("DATABASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "DATABASE_URL is required for the postgres build \
+                 (e.g. postgres://user:pass@localhost:5432/riparion)"
+            )
+        })?;
+    Ok(PgPoolOptions::new()
+        .max_connections(20)
+        .connect(&url)
+        .await?)
 }
 
 /// Generate responsive renditions for every local upload that has none yet

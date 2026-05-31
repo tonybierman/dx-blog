@@ -19,6 +19,21 @@ RUN cargo install dioxus-cli@0.7.9 --locked
 WORKDIR /app
 COPY . .
 
+# Pick the database backend at build time. `BACKEND=sqlite` (the default) keeps
+# `Cargo.toml`'s defaults untouched and `dx bundle` uses them as-is. `postgres`
+# patches the [features] `default` line to swap sqlite for postgres before the
+# bundle runs. Going through `default` (instead of `dx bundle ... --features`)
+# is deliberate: dx 0.7's per-target `@client`/`@server` feature splitting in
+# fullstack mode mishandles `--features`, ending up with server-only crates on
+# the wasm target. Defaults take dx's auto-strip path, which works.
+ARG BACKEND=sqlite
+
+RUN if [ "$BACKEND" = "postgres" ]; then \
+        sed -i 's/^default = \["web", "server", "sqlite"\]$/default = ["web", "server", "postgres"]/' Cargo.toml \
+     && grep -qE '^default = \["web", "server", "postgres"\]$' Cargo.toml \
+        || { echo "Cargo.toml default-features rewrite for postgres failed"; exit 1; }; \
+    fi
+
 # Cache mounts keep the cargo registry/git checkouts and the target dir warm
 # across rebuilds (BuildKit). The target dir lives in a cache mount, so the
 # bundle artifacts are copied out to /out within the same RUN — anything left in
@@ -60,9 +75,9 @@ COPY --from=builder --chown=$UID:$GID /out/ /app/
 RUN mkdir -p /app/data /app/uploads && chown -R "$UID:$GID" /app
 USER app
 
-# Bind to all interfaces inside the container; the SQLite DB lives on a mounted
-# volume (see docker-compose.yml). Uploaded media is written to ./uploads
-# (cwd-relative), also a mounted volume.
+# Bind to all interfaces inside the container. The default DATABASE_URL points
+# at the SQLite mount; the docker-compose.postgres.yml overlay overrides this
+# with a postgres URL pointing at the sidecar `db` service.
 ENV IP=0.0.0.0 \
     PORT=8888 \
     DATABASE_URL=sqlite:///app/data/blog.db?mode=rwc

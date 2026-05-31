@@ -29,8 +29,12 @@ jobs:
       - run: cargo fmt --all -- --check
 
   clippy:
-    name: cargo clippy
+    name: cargo clippy (${{ matrix.backend }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [sqlite, postgres]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -38,7 +42,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: server
+          shared-key: server-${{ matrix.backend }}
       # assets/tailwind.css is a generated artifact (gitignored) but the
       # `asset!()` macro needs it to exist at compile time. The standalone CLI
       # is self-contained — it resolves `@import "tailwindcss"` without npm.
@@ -48,28 +52,69 @@ jobs:
           chmod +x ./tailwindcss
           ./tailwindcss -i tailwind.css -o assets/tailwind.css
       # `too_many_arguments` is allowed: several server fns legitimately take
-      # many params (the wire boundary, not a refactor smell).
-      - name: Clippy (server target)
+      # many params (the wire boundary, not a refactor smell). Both feature
+      # selections are gated so a dialect-specific lint regression is caught
+      # before the build it would have broken at runtime.
+      - name: Clippy (server,${{ matrix.backend }})
         run: |
-          cargo clippy --no-default-features --features server,sqlite --all-targets \
+          cargo clippy --no-default-features --features server,${{ matrix.backend }} --all-targets \
             -- -D warnings -A clippy::too_many_arguments
 
   test:
-    name: cargo test (server)
+    name: cargo test (server,sqlite)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: server
+          shared-key: server-sqlite
       - name: Generate tailwind.css
         run: |
           curl -sSL "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-linux-x64" -o ./tailwindcss
           chmod +x ./tailwindcss
           ./tailwindcss -i tailwind.css -o assets/tailwind.css
-      # Server-side unit tests (in-memory SQLite + #[tokio::test]).
+      # Server-side unit tests (in-memory SQLite + #[tokio::test]). Postgres
+      # coverage is in the `pg-migrate` job — those tests need a live database
+      # and live in a separately-gated module.
       - run: cargo test --no-default-features --features server,sqlite
+
+  pg-migrate:
+    name: postgres migration apply
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: riparion_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d riparion_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/riparion_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: server-postgres
+      - name: Generate tailwind.css
+        run: |
+          curl -sSL "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-linux-x64" -o ./tailwindcss
+          chmod +x ./tailwindcss
+          ./tailwindcss -i tailwind.css -o assets/tailwind.css
+      # Boots a postgres-feature build of the test target and runs every test
+      # gated on `feature = "postgres"` — currently just `pg_migrations_apply`,
+      # which exercises every migrator (arium core + membership + riparion blog)
+      # against the live service. Catches dialect SQL regressions a clippy lint
+      # can't see.
+      - run: cargo test --no-default-features --features server,postgres
 
   wasm:
     name: check wasm client
@@ -110,9 +155,10 @@ jobs:
           shared-key: tools
       - run: cargo install --locked cargo-audit
       # RustSec advisory scan against Cargo.lock.
-      # RUSTSEC-2023-0071 (rsa Marvin Attack) is ignored: `rsa` is an unused
-      # transitive entry via sqlx-mysql, which this SQLite-only project never
-      # compiles (cargo tree -i rsa is empty), and the advisory has no fix.
+      # RUSTSEC-2023-0071 (rsa Marvin Attack) is ignored: `rsa` only enters via
+      # the sqlx-mysql driver, which neither the `server,sqlite` nor the
+      # `server,postgres` feature combinations compile (cargo tree -i rsa is
+      # empty in both), and the advisory has no fix.
       - run: cargo audit --ignore RUSTSEC-2023-0071
 
   unused-deps:

@@ -101,7 +101,7 @@ pub fn AdminPostList() -> Element {
                                     tr { key: "{p.id}", class: "border-b border-white/5",
                                         td { class: "py-2", "{p.title}" }
                                         td { Badge { tone: BadgeTone::Neutral, variant: BadgeVariant::Outlined, "{p.status}" } }
-                                        td { class: "text-white/50", {p.published_at.as_deref().map(crate::model::fmt_date).unwrap_or_else(|| "—".into())} }
+                                        td { class: "text-white/50", {p.published_at.as_ref().map(crate::model::fmt_date).unwrap_or_else(|| "—".into())} }
                                         td { class: "flex gap-3 py-2",
                                             {
                                                 let pid = p.id;

@@ -119,9 +119,9 @@ fn PostHead(post: crate::model::PostDetail, base_url: String) -> Element {
             document::Meta { property: "og:image", content: "{img}" }
             document::Meta { name: "twitter:image", content: "{img}" }
         }
-        // Normalize the stored SQLite datetime ("YYYY-MM-DD HH:MM:SS", UTC) to
-        // the ISO 8601 form Open Graph expects (shared with the feed/sitemap).
-        if let Some(when) = post.published_at.as_ref().map(|w| crate::model::to_rfc3339(w)) {
+        // Render the UTC timestamp as RFC3339 for the Open Graph tag (shared
+        // with the feed/sitemap).
+        if let Some(when) = post.published_at.as_ref().map(crate::model::to_rfc3339) {
             document::Meta { property: "article:published_time", content: "{when}" }
         }
         document::Meta { property: "article:author", content: "{post.author_name}" }
@@ -214,7 +214,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
                     class: "hover:underline",
                     "{post.author_name}"
                 }
-                if let Some(when) = post.published_at.as_deref().map(crate::model::fmt_date) {
+                if let Some(when) = post.published_at.as_ref().map(crate::model::fmt_date) {
                     span { "· {when}" }
                 }
                 PresenceBadge { live }
@@ -386,7 +386,9 @@ fn CommentSection(post_id: i64, live: LiveHandle) -> Element {
                 display_name: display,
                 body: b.clone(),
                 status: "sending".to_string(),
-                created_at: "just now".to_string(),
+                // Optimistic insert: leave timestamp blank until the server
+                // round-trip lands and replaces this row with the real one.
+                created_at: None,
             })
         });
 
@@ -476,7 +478,7 @@ fn CommentSection(post_id: i64, live: LiveHandle) -> Element {
                                     Badge { tone: BadgeTone::Amber, "awaiting approval" }
                                 }
                             }
-                            div { class: "text-xs text-white/40", {crate::model::fmt_date(&c.created_at)} }
+                            div { class: "text-xs text-white/40", {c.created_at.as_ref().map(crate::model::fmt_date).unwrap_or_default()} }
                             p { class: "mt-1 text-sm text-white/80", "{c.body}" }
                         }
                     }

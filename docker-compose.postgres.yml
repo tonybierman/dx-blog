@@ -1,0 +1,44 @@
+# Overlay that runs riparion-cms against a sidecar Postgres instead of SQLite.
+# Compose with the base file:
+#
+#   DOCKER_BUILDKIT=1 docker compose \
+#     -f docker-compose.yml -f docker-compose.postgres.yml up --build
+#
+# The blog still listens on http://localhost:8888; the postgres container is
+# only reachable from the compose network (no host port published).
+
+services:
+  blog:
+    build:
+      args:
+        # Flips Cargo's `default = […]` feature selection at build time — see
+        # the rationale in the Dockerfile (dx 0.7 fullstack `--features`
+        # splitting works through defaults, not through explicit args).
+        BACKEND: postgres
+    # No SQLite mount: the data lives in the postgres volume below. The uploads
+    # mount stays as-is (server-rendered media is still file-backed).
+    volumes: !override
+      - ./uploads:/app/uploads
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-riparion}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-riparion}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:-riparion}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:

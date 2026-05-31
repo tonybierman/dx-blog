@@ -6,6 +6,7 @@ use dioxus::prelude::*;
 
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::input::Input;
+use crate::components::text::{ErrorText, PageTitle, SectionTitle};
 use crate::server::admin::{
     create_category, create_tag, delete_category, delete_tag, rename_category, rename_tag,
 };
@@ -17,7 +18,7 @@ use super::AdminShell;
 pub fn AdminTaxonomy() -> Element {
     rsx! {
         AdminShell { active: "taxonomy".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Taxonomy" }
+            PageTitle { "Taxonomy" }
             div { class: "grid gap-8 md:grid-cols-2",
                 TaxonomyEditor { kind: TaxKind::Category }
                 TaxonomyEditor { kind: TaxKind::Tag }
@@ -97,7 +98,7 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
 
     rsx! {
         section {
-            h2 { class: "mb-3 text-lg font-semibold", "{kind.title()}" }
+            SectionTitle { "{kind.title()}" }
             div { class: "mb-3 flex gap-2",
                 Input {
                     class: "flex-1",
@@ -109,7 +110,7 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                 Button { variant: ButtonVariant::Primary, size: ButtonSize::Sm, onclick: move |_| add(()), "Add" }
             }
             if !err().is_empty() {
-                p { class: "mb-2 text-xs text-red-400", "{err}" }
+                ErrorText { class: "mb-2 text-xs".to_string(), "{err}" }
             }
             match &*items.read() {
                 Some(Ok(list)) if !list.is_empty() => {
@@ -180,7 +181,7 @@ fn TaxonomyEditor(kind: TaxKind) -> Element {
                     }
                 }
                 Some(Ok(_)) => rsx! { p { class: "text-sm text-white/40", "None yet." } },
-                Some(Err(e)) => rsx! { p { class: "text-sm text-red-400", "{e}" } },
+                Some(Err(e)) => rsx! { ErrorText { small: true, "{e}" } },
                 None => rsx! { p { class: "text-sm text-white/50", "Loading…" } },
             }
         }

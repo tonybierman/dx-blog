@@ -7,6 +7,8 @@ use std::time::Duration;
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::input::Input;
 use crate::components::select::{Select, SelectOption};
+use crate::components::surface::{Badge, BadgeTone, BadgeVariant};
+use crate::components::text::{ErrorText, Eyebrow, EyebrowAs, EyebrowSize, Mb, PageTitle};
 use crate::components::textarea::Textarea;
 use crate::model::{PostEditData, POST_STATUSES, STATUS_DRAFT};
 use crate::pages::widgets::list_states;
@@ -45,7 +47,7 @@ pub fn AdminPostList() -> Element {
     rsx! {
         AdminShell { active: "posts".to_string(),
             div { class: "mb-6 flex items-center justify-between",
-                h1 { class: "text-2xl font-bold", "Posts" }
+                PageTitle { mb: Mb::None, "Posts" }
                 Link { to: Route::AdminPostNew, class: "rounded bg-brand-600 px-3 py-1.5 text-sm font-medium hover:bg-brand-500", "New post" }
             }
             div { class: "mb-4 flex items-center gap-3 text-sm",
@@ -93,7 +95,7 @@ pub fn AdminPostList() -> Element {
                                 for p in list {
                                     tr { key: "{p.id}", class: "border-b border-white/5",
                                         td { class: "py-2", "{p.title}" }
-                                        td { span { class: "rounded-full border border-white/15 px-2 py-0.5 text-xs", "{p.status}" } }
+                                        td { Badge { tone: BadgeTone::Neutral, variant: BadgeVariant::Outlined, "{p.status}" } }
                                         td { class: "text-white/50", {p.published_at.as_deref().map(crate::model::fmt_date).unwrap_or_else(|| "—".into())} }
                                         td { class: "flex gap-3 py-2",
                                             Link { to: Route::AdminPostEdit { id: p.id }, class: "text-brand-400 hover:underline", "Edit" }
@@ -136,7 +138,7 @@ pub fn AdminPostEdit(id: i64) -> Element {
         AdminShell { active: "posts".to_string(),
             match &*data.read() {
                 Some(Ok(d)) => rsx! { EditorForm { key: "{d.id}", initial: d.clone() } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                Some(Err(e)) => rsx! { ErrorText { "{e}" } },
                 None => rsx! { p { class: "text-white/50", "Loading…" } },
             }
         }
@@ -238,7 +240,7 @@ fn EditorForm(initial: PostEditData) -> Element {
     };
 
     rsx! {
-        h1 { class: "mb-6 text-2xl font-bold", if editing { "Edit post" } else { "New post" } }
+        PageTitle { if editing { "Edit post" } else { "New post" } }
         div { class: "grid gap-6 lg:grid-cols-2",
             // Left: form
             div { class: "space-y-3",
@@ -302,31 +304,37 @@ fn EditorForm(initial: PostEditData) -> Element {
                                     }
                                 },
                                 Some(Ok(_)) => rsx! { p { class: "p-2 text-sm text-white/50", "No media uploaded yet — add some on the Media page." } },
-                                Some(Err(e)) => rsx! { p { class: "p-2 text-sm text-red-400", "Error: {e}" } },
+                                Some(Err(e)) => rsx! { ErrorText { small: true, class: "p-2".to_string(), "Error: {e}" } },
                                 None => rsx! { p { class: "p-2 text-sm text-white/50", "Loading…" } },
                             }
                         }
                     }
                 }
                 div { class: "flex gap-3",
-                    Select::<String> {
-                        default_value: Some(category_id().map(|id| id.to_string()).unwrap_or_default()),
-                        on_value_change: move |v: Option<String>| {
-                            category_id.set(v.and_then(|s| s.parse::<i64>().ok()))
-                        },
-                        SelectOption::<String> { index: 0usize, value: String::new(), "— Category —" }
-                        if let Some(Ok(list)) = &*cats.read() {
-                            {list.clone().into_iter().enumerate().map(|(i, c)| rsx! {
-                                SelectOption::<String> { key: "{c.id}", index: i + 1, value: "{c.id}", "{c.name}" }
-                            })}
+                    label { class: "flex-1 space-y-1",
+                        span { class: "block text-sm font-medium text-white/70", "Category" }
+                        Select::<String> {
+                            default_value: Some(category_id().map(|id| id.to_string()).unwrap_or_default()),
+                            on_value_change: move |v: Option<String>| {
+                                category_id.set(v.and_then(|s| s.parse::<i64>().ok()))
+                            },
+                            SelectOption::<String> { index: 0usize, value: String::new(), "Uncategorized" }
+                            if let Some(Ok(list)) = &*cats.read() {
+                                {list.clone().into_iter().enumerate().map(|(i, c)| rsx! {
+                                    SelectOption::<String> { key: "{c.id}", index: i + 1, value: "{c.id}", "{c.name}" }
+                                })}
+                            }
                         }
                     }
-                    Select::<String> {
-                        default_value: Some(status()),
-                        on_value_change: move |v: Option<String>| { if let Some(v) = v { status.set(v); } },
-                        {POST_STATUSES.iter().enumerate().map(|(i, s)| rsx! {
-                            SelectOption::<String> { key: "{s}", index: i, value: s.to_string(), "{s}" }
-                        })}
+                    label { class: "flex-1 space-y-1",
+                        span { class: "block text-sm font-medium text-white/70", "Status" }
+                        Select::<String> {
+                            default_value: Some(status()),
+                            on_value_change: move |v: Option<String>| { if let Some(v) = v { status.set(v); } },
+                            {POST_STATUSES.iter().enumerate().map(|(i, s)| rsx! {
+                                SelectOption::<String> { key: "{s}", index: i, value: s.to_string(), "{s}" }
+                            })}
+                        }
                     }
                 }
                 if let Some(Ok(list)) = &*tags.read() {
@@ -359,7 +367,7 @@ fn EditorForm(initial: PostEditData) -> Element {
                     }
                 }
                 div { class: "flex items-center justify-between",
-                    label { class: "text-sm uppercase tracking-wide text-white/40", "Markdown" }
+                    Eyebrow { r#as: EyebrowAs::Label, size: EyebrowSize::Sm, "Markdown" }
                     Button {
                         r#type: "button",
                         variant: ButtonVariant::Outline,
@@ -377,13 +385,13 @@ fn EditorForm(initial: PostEditData) -> Element {
                         if editing { "Save changes" } else { "Create post" }
                     }
                     if !msg().is_empty() {
-                        span { class: "text-sm text-red-400", "{msg}" }
+                        ErrorText { inline: true, small: true, "{msg}" }
                     }
                 }
             }
             // Right: live preview
             div {
-                h3 { class: "mb-2 text-sm uppercase tracking-wide text-white/40", "Preview" }
+                Eyebrow { r#as: EyebrowAs::Div, size: EyebrowSize::Sm, mb: Mb::Mb2, "Preview" }
                 div { class: "prose max-w-none rounded border border-white/10 p-4",
                     {render_preview()}
                 }

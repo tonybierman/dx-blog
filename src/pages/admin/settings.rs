@@ -5,6 +5,7 @@ use dioxus::prelude::*;
 
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
 use crate::components::input::Input;
+use crate::components::text::{ErrorText, PageTitle};
 use crate::server::settings::{get_site_tagline, get_site_title, set_site_tagline, set_site_title};
 
 use super::AdminShell;
@@ -60,7 +61,7 @@ pub fn AdminSettings() -> Element {
 
     rsx! {
         AdminShell { active: "settings".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Site settings" }
+            PageTitle { "Site settings" }
             section { class: "max-w-xl space-y-4",
                 div {
                     label { class: "mb-1 block text-sm font-medium", "Site title" }
@@ -93,7 +94,7 @@ pub fn AdminSettings() -> Element {
                         span { class: "text-sm text-green-400", "Saved" }
                     }
                     if !err().is_empty() {
-                        span { class: "text-sm text-red-400", "{err}" }
+                        ErrorText { inline: true, small: true, "{err}" }
                     }
                 }
             }

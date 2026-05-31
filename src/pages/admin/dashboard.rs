@@ -6,6 +6,8 @@ use dioxus::prelude::*;
 use arium_dioxus::ui::{use_permissions, UsePermissions};
 
 use crate::auth_tokens::{ANALYTICS_READ, COMMENTS_MODERATE};
+use crate::components::surface::{panel_class, Badge, PanelPadding, PanelVariant};
+use crate::components::text::{ErrorText, PageTitle, SectionTitle};
 use crate::live::{use_admin_live, ActivityKind, AdminLiveHandle};
 use crate::model::AnalyticsSummary;
 use crate::server::analytics::{analytics_summary, top_posts, top_referrers, views_over_time};
@@ -37,12 +39,14 @@ fn MetricTiles(summary: AnalyticsSummary) -> Element {
         ("Subscribers", summary.subscriber_count),
         ("Views", summary.view_count),
     ];
+    let tile_surface = panel_class(PanelVariant::Filled, PanelPadding::Lg);
     rsx! {
         div { class: "grid auto-rows-[120px] grid-cols-2 gap-4 md:grid-cols-4",
             for (i, (label, value)) in tiles.into_iter().enumerate() {
                 div {
                     key: "{label}",
-                    class: if i == 0 { "col-span-2 row-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4 flex flex-col justify-center" } else { "rounded-xl border border-white/10 bg-white/[0.03] p-4 flex flex-col justify-center" },
+                    class: "{tile_surface} flex flex-col justify-center",
+                    class: if i == 0 { "col-span-2 row-span-2" },
                     div { class: "text-sm text-white/50", "{label}" }
                     div { class: if i == 0 { "text-5xl font-bold" } else { "text-3xl font-bold" }, "{value}" }
                 }
@@ -74,7 +78,7 @@ pub fn AdminDashboard() -> Element {
     }
     rsx! {
         AdminShell { active: "dashboard".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Dashboard" }
+            PageTitle { "Dashboard" }
             match &*summary.read() {
                 Some(Ok(s)) => {
                     // Fold the live reaction delta into the fetched baseline so
@@ -83,7 +87,7 @@ pub fn AdminDashboard() -> Element {
                     s.reaction_count += (live.reaction_delta)();
                     rsx! { MetricTiles { summary: s } }
                 }
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                Some(Err(e)) => rsx! { ErrorText { "{e}" } },
                 None => rsx! { p { class: "text-white/50", "Loading…" } },
             }
             if has_moderate {
@@ -98,10 +102,11 @@ pub fn AdminDashboard() -> Element {
 #[component]
 fn ActivityFeed(live: AdminLiveHandle) -> Element {
     let items = (live.activity)();
+    let feed_surface = panel_class(PanelVariant::Filled, PanelPadding::Sm);
     rsx! {
         section { class: "mt-8",
-            h2 { class: "mb-3 text-lg font-semibold", "Live activity" }
-            div { class: "rounded-xl border border-white/10 bg-white/[0.03] p-2",
+            SectionTitle { "Live activity" }
+            div { class: "{feed_surface}",
                 if items.is_empty() {
                     p { class: "p-3 text-sm text-white/40", "Waiting for activity…" }
                 } else {
@@ -114,13 +119,11 @@ fn ActivityFeed(live: AdminLiveHandle) -> Element {
                                     // (brand-*), tinted like the presence badge.
                                     match &it.kind {
                                         ActivityKind::Comment { who, status, .. } => rsx! {
-                                            span { class: "rounded bg-brand-500/10 px-1.5 text-xs text-brand-300",
-                                                "{status}"
-                                            }
+                                            Badge { "{status}" }
                                             span { class: "truncate text-white/70", "💬 {who}" }
                                         },
                                         ActivityKind::Reaction { total } => rsx! {
-                                            span { class: "rounded bg-brand-500/10 px-1.5 text-xs text-brand-300", "reaction" }
+                                            Badge { "reaction" }
                                             span { class: "truncate text-white/70", "👏 {total} total" }
                                         },
                                     }
@@ -150,17 +153,18 @@ pub fn AdminAnalytics() -> Element {
         navigator().replace(route);
         return rsx! {};
     }
+    let chart_surface = panel_class(PanelVariant::Filled, PanelPadding::Lg);
     rsx! {
         AdminShell { active: "analytics".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Analytics" }
+            PageTitle { "Analytics" }
             match &*summary.read() {
                 Some(Ok(s)) => rsx! { MetricTiles { summary: s.clone() } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                Some(Err(e)) => rsx! { ErrorText { "{e}" } },
                 None => rsx! { p { class: "text-white/50", "Loading…" } },
             }
 
-            h2 { class: "mb-3 mt-8 text-lg font-semibold", "Views over time" }
-            div { class: "rounded-xl border border-white/10 bg-white/[0.03] p-4",
+            SectionTitle { class: "mt-8".to_string(), "Views over time" }
+            div { class: "{chart_surface}",
                 match &*series.read() {
                     Some(Ok(days)) if !days.is_empty() => {
                         let days = days.clone();
@@ -179,14 +183,14 @@ pub fn AdminAnalytics() -> Element {
                         }
                     }
                     Some(Ok(_)) => rsx! { p { class: "text-white/40", "No views in the last 30 days." } },
-                    Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                    Some(Err(e)) => rsx! { ErrorText { "{e}" } },
                     None => rsx! { p { class: "text-white/50", "…" } },
                 }
             }
 
             div { class: "mt-8 grid gap-8 md:grid-cols-2",
                 section {
-                    h2 { class: "mb-3 text-lg font-semibold", "Top posts" }
+                    SectionTitle { "Top posts" }
                     match &*top.read() {
                         Some(Ok(list)) if !list.is_empty() => rsx! {
                             ul { class: "space-y-1 text-sm",
@@ -196,12 +200,12 @@ pub fn AdminAnalytics() -> Element {
                             }
                         },
                         Some(Ok(_)) => rsx! { p { class: "text-white/40", "No views yet." } },
-                        Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                        Some(Err(e)) => rsx! { ErrorText { "{e}" } },
                         None => rsx! { p { class: "text-white/50", "…" } },
                     }
                 }
                 section {
-                    h2 { class: "mb-3 text-lg font-semibold", "Top referrers" }
+                    SectionTitle { "Top referrers" }
                     match &*referrers.read() {
                         Some(Ok(list)) if !list.is_empty() => rsx! {
                             ul { class: "space-y-1 text-sm",
@@ -214,7 +218,7 @@ pub fn AdminAnalytics() -> Element {
                             }
                         },
                         Some(Ok(_)) => rsx! { p { class: "text-white/40", "No referrers yet." } },
-                        Some(Err(e)) => rsx! { p { class: "text-red-400", "{e}" } },
+                        Some(Err(e)) => rsx! { ErrorText { "{e}" } },
                         None => rsx! { p { class: "text-white/50", "…" } },
                     }
                 }

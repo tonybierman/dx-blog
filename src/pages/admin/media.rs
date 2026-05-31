@@ -4,6 +4,8 @@
 use dioxus::prelude::*;
 
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::surface::{Panel, PanelPadding, PanelVariant};
+use crate::components::text::PageTitle;
 use crate::pages::widgets::list_states;
 use crate::server::admin::{delete_media, list_media, media_usage, upload_media};
 
@@ -52,7 +54,7 @@ pub fn AdminMedia() -> Element {
 
     rsx! {
         AdminShell { active: "media".to_string(),
-            h1 { class: "mb-6 text-2xl font-bold", "Media library" }
+            PageTitle { "Media library" }
             div { class: "mb-6 flex items-center gap-3",
                 input { id: "mediafile", r#type: "file", accept: "image/*", class: "text-sm" }
                 Button { variant: ButtonVariant::Primary, size: ButtonSize::Sm, onclick: upload, "Upload" }
@@ -61,7 +63,7 @@ pub fn AdminMedia() -> Element {
             {list_states!(media, empty: "No media yet.", list => rsx! {
                     div { class: "columns-2 gap-4 md:columns-3 lg:columns-4",
                         for m in list {
-                            div { key: "{m.id}", class: "mb-4 inline-block w-full break-inside-avoid rounded-lg border border-white/10 p-2",
+                            Panel { key: "{m.id}", variant: PanelVariant::Outlined, padding: PanelPadding::Sm, class: "mb-4 inline-block w-full break-inside-avoid".to_string(),
                                 img { class: "w-full rounded", src: "{m.url}", alt: "{m.filename}" }
                                 div { class: "mt-1 flex items-center justify-between gap-2",
                                     button {

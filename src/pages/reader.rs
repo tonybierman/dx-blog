@@ -13,6 +13,8 @@ use crate::components::dropdown_menu::{
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 };
 use crate::components::input::Input;
+use crate::components::surface::{Alert, Badge, BadgeTone, Panel, PanelVariant};
+use crate::components::text::{ErrorText, Eyebrow, EyebrowAs, Mb, PageTitle};
 use crate::components::textarea::Textarea;
 use crate::layouts::{BentoGridLayout, FullBleedLayout, HolyGrailLayout, MasonryLayout};
 use crate::live::{use_live, LiveHandle};
@@ -74,7 +76,7 @@ fn PostContent(slug: String) -> Element {
             }
         }
         Ok(None) => rsx! { p { class: "mt-8 text-white/60", "Post not found." } },
-        Err(e) => rsx! { p { class: "mt-8 text-red-400", "Error: {e}" } },
+        Err(e) => rsx! { ErrorText { class: "mt-8".to_string(), "Error: {e}" } },
     }
 }
 
@@ -168,7 +170,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
     rsx! {
         article {
             if is_draft {
-                div { class: "mb-6 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200",
+                Alert { class: "mb-6".to_string(),
                     "Draft preview — this post is not published and is only visible to you."
                 }
             }
@@ -225,7 +227,7 @@ fn PostBody(post: crate::model::PostDetail) -> Element {
 
             // Author bio
             if let Some(bio) = post.author_bio.clone() {
-                div { class: "mt-10 rounded-xl border border-white/10 bg-white/[0.03] p-4",
+                Panel { class: "mt-10".to_string(),
                     h3 { class: "font-semibold",
                         "About "
                         Link {
@@ -253,8 +255,7 @@ fn PresenceBadge(live: LiveHandle) -> Element {
     let n = (live.reading_now)();
     rsx! {
         if n >= 1 {
-            span { class: "inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-xs text-brand-300",
-                span { class: "h-1.5 w-1.5 animate-pulse rounded-full bg-brand-400" }
+            Badge { tone: BadgeTone::Brand, dot: true,
                 "{n} reading now"
             }
         }
@@ -454,13 +455,13 @@ fn CommentSection(post_id: i64, live: LiveHandle) -> Element {
             div { class: "mt-4 space-y-4",
                 if !merged.is_empty() {
                     for c in merged {
-                        div { key: "{c.id}", class: "rounded-lg border border-white/10 p-3",
+                        Panel { key: "{c.id}", variant: PanelVariant::Outlined, padding: crate::components::surface::PanelPadding::Md,
                             div { class: "flex items-center gap-2",
                                 div { class: "text-sm font-medium", "{c.display_name}" }
                                 if c.status == "sending" {
                                     span { class: "text-xs text-white/40 italic", "posting…" }
                                 } else if c.status == "pending" {
-                                    span { class: "rounded bg-amber-400/10 px-1.5 text-xs text-amber-300", "awaiting approval" }
+                                    Badge { tone: BadgeTone::Amber, "awaiting approval" }
                                 }
                             }
                             div { class: "text-xs text-white/40", {crate::model::fmt_date(&c.created_at)} }
@@ -470,7 +471,7 @@ fn CommentSection(post_id: i64, live: LiveHandle) -> Element {
                 } else if loading {
                     p { class: "text-sm text-white/50", "Loading…" }
                 } else if load_error {
-                    p { class: "text-sm text-red-400", "Couldn't load comments." }
+                    ErrorText { small: true, "Couldn't load comments." }
                 } else {
                     p { class: "text-sm text-white/50", "No comments yet." }
                 }
@@ -555,7 +556,7 @@ pub fn CategoryFeed(slug: String) -> Element {
     rsx! {
         HolyGrailLayout {
             left: rsx! { CategoryList {} TagList {} },
-            h1 { class: "mb-6 text-2xl font-bold", "Category: {title}" }
+            PageTitle { "Category: {title}" }
             PaginatedFeed { category_slug: Some(slug.clone()), tag_slug: None }
         }
     }
@@ -591,7 +592,7 @@ pub fn TagFeed(slug: String) -> Element {
     rsx! {
         BentoGridLayout {
             left: rsx! {
-                h1 { class: "text-2xl font-bold", "#{title}" }
+                PageTitle { "#{title}" }
                 TagList {}
             },
             FeedSection { posts, shape: FeedShape::Bento, page }
@@ -667,7 +668,7 @@ pub fn AuthorProfile(slug: String) -> Element {
     rsx! {
         HolyGrailLayout {
             left: sidebar,
-            h1 { class: "mb-6 text-2xl font-bold", "Posts" }
+            PageTitle { "Posts" }
             FeedSection { posts, shape: FeedShape::Grid, page }
         }
     }
@@ -679,7 +680,7 @@ pub fn Archive() -> Element {
     let posts = use_resource(move || async move { list_archive(page()).await });
     rsx! {
         MasonryLayout {
-            h1 { class: "mb-6 text-2xl font-bold", "Archive" }
+            PageTitle { "Archive" }
             FeedSection { posts, shape: FeedShape::Masonry, page }
         }
     }
@@ -707,7 +708,7 @@ fn FacetMenu(
 
     rsx! {
         div {
-            label { class: "mb-1 block text-xs uppercase tracking-wide text-white/40", "{label}" }
+            Eyebrow { r#as: EyebrowAs::Label, mb: Mb::Mb1, class: "block".to_string(), "{label}" }
             DropdownMenu { class: "block w-full",
                 DropdownMenuTrigger {
                     class: "flex w-full items-center justify-between gap-2 text-left",
@@ -814,7 +815,7 @@ pub fn SearchResults(q: String) -> Element {
                     }
                 }
             },
-            h1 { class: "mb-4 text-2xl font-bold", "Search" }
+            PageTitle { "Search" }
             Input {
                 class: "mb-6 w-full",
                 placeholder: "Search posts…",
@@ -900,7 +901,7 @@ pub fn ConfirmSubscription(token: String) -> Element {
                         }
                         Link { to: Route::Subscribe, class: "text-sm text-brand-400 hover:underline", "Subscribe →" }
                     },
-                    Some(Err(e)) => rsx! { p { class: "text-red-400", "Error: {e}" } },
+                    Some(Err(e)) => rsx! { ErrorText { "Error: {e}" } },
                     None => rsx! { p { class: "text-white/50", "Confirming…" } },
                 }
                 Link { to: Route::HomePage, class: "text-sm text-white/50 hover:underline", "← Home" }

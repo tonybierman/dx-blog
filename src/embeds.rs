@@ -19,6 +19,8 @@ use dioxus::prelude::*;
 use dioxus_sdk_time::use_interval;
 
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::surface::{Alert, Panel, StatusDot, StatusDotTone};
+use crate::components::text::{Eyebrow, EyebrowAs, EyebrowTone};
 
 /// String prop bag parsed from an embed block.
 type Props = BTreeMap<String, String>;
@@ -94,7 +96,7 @@ fn CounterDemo(start: i64, step: i64, label: String) -> Element {
     let mut count = use_signal(|| start);
 
     rsx! {
-        div { class: "flex items-center gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-4",
+        Panel { class: "flex items-center gap-4".to_string(),
             Button {
                 variant: ButtonVariant::Outline,
                 size: ButtonSize::Icon,
@@ -103,7 +105,7 @@ fn CounterDemo(start: i64, step: i64, label: String) -> Element {
             }
             div { class: "min-w-24 text-center",
                 div { class: "text-2xl font-bold tabular-nums", "{count}" }
-                div { class: "text-xs uppercase tracking-wide text-white/40", "{label}" }
+                Eyebrow { r#as: EyebrowAs::Div, "{label}" }
             }
             Button {
                 variant: ButtonVariant::Outline,
@@ -121,8 +123,9 @@ fn CounterDemo(start: i64, step: i64, label: String) -> Element {
 fn InlineChart(data: Vec<f64>, kind: String, color: String) -> Element {
     if data.is_empty() {
         return rsx! {
-            p { class: "rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-200",
-                "chart embed: provide numeric data, e.g. ", code { "data=\"3,7,2,9\"" }
+            Alert {
+                "chart embed: provide numeric data, e.g. "
+                code { "data=\"3,7,2,9\"" }
             }
         };
     }
@@ -133,7 +136,7 @@ fn InlineChart(data: Vec<f64>, kind: String, color: String) -> Element {
     let n = data.len();
 
     rsx! {
-        div { class: "rounded-xl border border-white/10 bg-white/[0.03] p-4",
+        Panel {
             svg {
                 class: "h-40 w-full",
                 view_box: "0 0 {w} {h}",
@@ -205,7 +208,7 @@ fn TweakViz(label: String) -> Element {
     });
 
     rsx! {
-        div { class: "rounded-xl border border-white/10 bg-white/[0.03] p-4",
+        Panel {
             svg {
                 class: "h-32 w-full",
                 view_box: "0 0 100 40",
@@ -272,10 +275,10 @@ fn LiveChart(topic: String, window: usize, color: String, label: String) -> Elem
     // state instead of an empty/garbage plot.
     if series.is_empty() {
         return rsx! {
-            div { class: "rounded-xl border border-white/10 bg-white/[0.03] p-4",
+            Panel {
                 div { class: "mb-2 flex items-center gap-2 text-sm",
-                    span { class: "inline-block h-2 w-2 animate-pulse rounded-full bg-white/30" }
-                    span { class: "text-xs uppercase tracking-wide text-white/40", "{label}" }
+                    StatusDot { tone: StatusDotTone::Neutral }
+                    Eyebrow { "{label}" }
                 }
                 div { class: "flex h-40 items-center justify-center text-xs text-white/30",
                     "Waiting for live data…"
@@ -315,11 +318,11 @@ fn LiveChart(topic: String, window: usize, color: String, label: String) -> Elem
     let (head_x, head_y) = xy(n.saturating_sub(1), latest);
 
     rsx! {
-        div { class: "rounded-xl border border-white/10 bg-white/[0.03] p-4",
+        Panel {
             div { class: "mb-2 flex items-center justify-between text-sm",
                 div { class: "flex items-center gap-2",
-                    span { class: "inline-block h-2 w-2 animate-pulse rounded-full bg-red-500" }
-                    span { class: "text-xs uppercase tracking-wide text-white/50", "{label}" }
+                    StatusDot { tone: StatusDotTone::Red }
+                    Eyebrow { tone: EyebrowTone::Default, "{label}" }
                 }
                 span { class: "tabular-nums font-semibold", "{latest:.1}" }
             }
@@ -422,12 +425,12 @@ fn StockChart(symbol: String, period_ms: u64, window: usize, start: f64) -> Elem
     let body_w = (slot * 0.6).max(0.4);
 
     rsx! {
-        div { class: "rounded-xl border border-white/10 bg-white/[0.03] p-4",
+        Panel {
             div { class: "mb-2 flex items-end justify-between",
                 div { class: "flex items-center gap-2",
                     span { class: "font-semibold tracking-wide", "{symbol}" }
                     span { class: "flex items-center gap-1 text-[10px] uppercase tracking-wide text-emerald-400",
-                        span { class: "inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" }
+                        StatusDot { tone: StatusDotTone::Emerald, muted: true }
                         "Market open"
                     }
                 }
@@ -514,8 +517,9 @@ fn rnd(step: u64, salt: u64) -> f64 {
 #[component]
 fn UnknownEmbed(name: String) -> Element {
     rsx! {
-        p { class: "rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-200",
-            "Unknown embed component: ", code { "{name}" }
+        Alert {
+            "Unknown embed component: "
+            code { "{name}" }
         }
     }
 }

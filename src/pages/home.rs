@@ -5,6 +5,7 @@
 
 use dioxus::prelude::*;
 
+use crate::components::text::PageTitle;
 use crate::layouts::{
     BentoGridLayout, CardGridLayout, DrawerLayout, EditorialLayout, FullBleedLayout,
     HeroScrollLayout, HolyGrailLayout, MasonryLayout, MegaMenuLayout, ScrollStickyLayout,
@@ -47,7 +48,7 @@ pub fn HomePage() -> Element {
                     FeaturedPosts {}
                     RecentComments {}
                 },
-                h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
+                PageTitle { "Latest posts" }
                 {body}
             }
         },
@@ -57,7 +58,7 @@ pub fn HomePage() -> Element {
                     CategoryList {}
                     TagList {}
                 },
-                h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
+                PageTitle { "Latest posts" }
                 {body}
             }
         },
@@ -69,14 +70,14 @@ pub fn HomePage() -> Element {
                         p { class: "mt-3 text-white/60", "Latest writing from the blog." }
                     }
                 },
-                h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
+                PageTitle { "Latest posts" }
                 {body}
             }
         },
         HomeLayout::FullBleed => rsx! {
             FullBleedLayout {
                 div { class: "mx-auto w-full max-w-5xl px-4 py-10",
-                    h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
+                    PageTitle { "Latest posts" }
                     {body}
                 }
             }
@@ -87,7 +88,7 @@ pub fn HomePage() -> Element {
                     CategoryList {}
                     TagList {}
                 },
-                h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
+                PageTitle { "Latest posts" }
                 {body}
             }
         },
@@ -97,25 +98,25 @@ pub fn HomePage() -> Element {
                     CategoryList {}
                     TagList {}
                 },
-                h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
+                PageTitle { "Latest posts" }
                 {body}
             }
         },
         HomeLayout::BentoGrid => rsx! {
             BentoGridLayout {
-                left: rsx! { h1 { class: "text-2xl font-bold", "Latest posts" } },
+                left: rsx! { PageTitle { "Latest posts" } },
                 {body}
             }
         },
         HomeLayout::Masonry => rsx! {
             MasonryLayout {
-                h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
+                PageTitle { "Latest posts" }
                 {body}
             }
         },
         HomeLayout::CardGrid => rsx! {
             CardGridLayout {
-                h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
+                PageTitle { "Latest posts" }
                 {body}
             }
         },
@@ -131,7 +132,7 @@ pub fn HomePage() -> Element {
         },
         HomeLayout::HeroScroll => rsx! {
             HeroScrollLayout {
-                h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
+                PageTitle { "Latest posts" }
                 {body}
             }
         },
@@ -141,7 +142,7 @@ pub fn HomePage() -> Element {
                     FeaturedPosts {}
                     RecentComments {}
                 },
-                h1 { class: "mb-6 text-2xl font-bold", "Latest posts" }
+                PageTitle { "Latest posts" }
                 {body}
             }
         },

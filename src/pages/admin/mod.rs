@@ -15,6 +15,7 @@ use std::pin::Pin;
 use arium_dioxus::ui::{PermissionGate, Policy, RequirePermission};
 
 use crate::components::button::{Button, ButtonSize, ButtonVariant};
+use crate::components::text::ErrorText;
 
 use crate::auth_tokens::{
     ADMIN_NAV_TOKENS, ANALYTICS_READ, COMMENTS_MODERATE, MEDIA_UPLOAD, POSTS_WRITE, SETTINGS_WRITE,
@@ -165,7 +166,7 @@ pub(crate) fn ActionButton(
             "{label}"
         }
         if !err().is_empty() {
-            span { class: "ml-2 text-xs text-red-400", "{err}" }
+            ErrorText { inline: true, class: "ml-2 text-xs".to_string(), "{err}" }
         }
     }
 }
